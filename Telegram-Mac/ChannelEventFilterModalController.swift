@@ -227,27 +227,32 @@ private enum FilterEvents {
     case groupInfo
     case deletedMessages
     case editedMessages
+    case voiceChats
     case pinnedMessages
     case leavingMembers
-    
+    case invites
     var flags:AdminLogEventsFlags {
         switch self {
         case .newMembers:
-            return [AdminLogEventsFlags.join, AdminLogEventsFlags.unban]
+            return [.join, .unban]
         case .newAdmins:
-            return [AdminLogEventsFlags.promote]
+            return [.promote]
         case .leavingMembers:
-            return  [AdminLogEventsFlags.leave, AdminLogEventsFlags.kick]
+            return  [.leave, .kick]
         case .restrictions:
-            return [AdminLogEventsFlags.unban, AdminLogEventsFlags.ban]
+            return [.unban, .ban]
         case .groupInfo:
-            return [AdminLogEventsFlags.info, AdminLogEventsFlags.settings]
+            return [.info, .settings]
         case .pinnedMessages:
-            return [AdminLogEventsFlags.pinnedMessages]
+            return [.pinnedMessages]
         case .editedMessages:
-            return [AdminLogEventsFlags.editMessages]
+            return [.editMessages]
         case .deletedMessages:
-            return [AdminLogEventsFlags.deleteMessages]
+            return [.deleteMessages]
+        case .voiceChats:
+            return [.calls]
+        case .invites:
+            return [.invites]
         }
     }
     
@@ -269,6 +274,10 @@ private enum FilterEvents {
             return tr(L10n.channelEventFilterEditedMessages)
         case .deletedMessages:
             return tr(L10n.channelEventFilterDeletedMessages)
+        case .voiceChats:
+            return tr(L10n.channelEventFilterVoiceChats)
+        case .invites:
+            return tr(L10n.channelEventFilterInvites)
         }
     }
 }
@@ -277,7 +286,7 @@ private func eventFilters(_ channel: Bool) -> [FilterEvents] {
     if channel {
         return [.newMembers, .newAdmins, .groupInfo, .deletedMessages, .editedMessages, .leavingMembers]
     } else {
-        return [.restrictions, .newMembers, .newAdmins, .groupInfo, .deletedMessages, .editedMessages, .pinnedMessages, .leavingMembers]
+        return [.restrictions, .newMembers, .newAdmins, .groupInfo, .invites, .deletedMessages, .editedMessages, .voiceChats, .pinnedMessages, .leavingMembers]
     }
 }
 

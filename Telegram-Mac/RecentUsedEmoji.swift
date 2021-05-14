@@ -56,7 +56,7 @@ class RecentUsedEmoji: PreferencesEntry, Equatable {
     }
     
     public static var defaultSettings: RecentUsedEmoji {
-        return RecentUsedEmoji(emojies: ["😂", "😘", "❤️", "😍", "😊", "🤔", "😁", "👍", "☺️", "😔", "😄", "😭", "💋", "😒", "😳", "😜", "🙈", "😉", "😃", "😢", "😝", "😱", "😡", "😏", "😞", "😅", "😚", "🙊", "😌", "😀", "😋", "😆", "🌚", "😐", "😕", "👎", diceSymbol], skinModifiers: [])
+        return RecentUsedEmoji(emojies: ["😂", "😘", "❤️", "😍", "😊", "🤔", "😁", "👍", "☺️", "😔", "😄", "😭", "💋", "😒", "😳", "😜", "🙈", "😉", "😃", "😢", "😝", "😱", "😡", "😏", "😞", "😅", "😚", "🙊", "😌", "😀", "😋", "😆", "🌚", "😐", "😕", "👎", diceSymbol, dartSymbol], skinModifiers: [])
     }
     
     var emojies: [String] {
@@ -71,7 +71,7 @@ class RecentUsedEmoji: PreferencesEntry, Equatable {
                         emoji = skin.modify
                     }
                 }
-                list.append(emoji)
+                list.append(emoji.nsstring.substring(with: NSMakeRange(0, min(emoji.length, 8))))
             }
         }
         return list.reduce([], { current, value in

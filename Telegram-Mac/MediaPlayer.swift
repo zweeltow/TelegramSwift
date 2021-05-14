@@ -33,6 +33,10 @@ private final class MediaPlayerLoadedState {
         self.mediaBuffers = mediaBuffers
         self.controlTimebase = controlTimebase
     }
+    deinit {
+        var bp:Int = 0
+        bp += 1
+    }
 }
 
 private enum MediaPlayerState {
@@ -75,7 +79,11 @@ private final class MediaPlayerContext {
     private var initialTimebase: CMTimebase?
     private var seekId: Int = 0
     
-    private var state: MediaPlayerState = .empty
+    private var state: MediaPlayerState = .empty {
+        didSet {
+            assert(queue.isCurrent())
+        }
+    }
     private var audioRenderer: MediaPlayerAudioRendererContext?
     private var forceAudioToSpeaker = false
     fileprivate let videoRenderer: VideoPlayerProxy
@@ -116,29 +124,29 @@ private final class MediaPlayerContext {
             
             if let strongSelf = self, !strongSelf.enableSound {
                 switch strongSelf.state {
-                    case .empty:
-                        if value && playAutomatically {
-                            strongSelf.play()
-                        }
-                    case .paused:
+                case .empty:
+                    if value && playAutomatically {
+                        strongSelf.play()
+                    }
+                case .paused:
+                    if value {
+                        strongSelf.play()
+                    }
+                case .playing:
+                    if !value {
+                        strongSelf.pause(lostAudioSession: false)
+                    }
+                case let .seeking(_, _, _, action, _):
+                    switch action {
+                    case .pause:
                         if value {
                             strongSelf.play()
                         }
-                    case .playing:
+                    case .play:
                         if !value {
                             strongSelf.pause(lostAudioSession: false)
                         }
-                    case let .seeking(_, _, _, action, _):
-                        switch action {
-                            case .pause:
-                                if value {
-                                    strongSelf.play()
-                                }
-                            case .play:
-                                if !value {
-                                    strongSelf.pause(lostAudioSession: false)
-                                }
-                        }
+                    }
                 }
             }
         }
@@ -150,14 +158,14 @@ private final class MediaPlayerContext {
                 var maybeLoadedState: MediaPlayerLoadedState?
                 
                 switch strongSelf.state {
-                    case .empty:
-                        return .noFrames
-                    case .paused:
-                        return .noFrames
-                    case let .playing(state):
-                        maybeLoadedState = state
-                    case .seeking:
-                        return .noFrames
+                case .empty:
+                    return .noFrames
+                case let .paused(state):
+                    maybeLoadedState = state
+                case let .playing(state):
+                    maybeLoadedState = state
+                case .seeking:
+                    return .noFrames
                 }
                 
                 if let loadedState = maybeLoadedState, let videoBuffer = loadedState.mediaBuffers.videoBuffer {
@@ -170,10 +178,10 @@ private final class MediaPlayerContext {
                 } else {
                     return .noFrames
                 }
-
             } else {
                 return .noFrames
             }
+
         })
     }
     
@@ -192,12 +200,12 @@ private final class MediaPlayerContext {
         
         let action: MediaPlayerPlaybackAction
         switch self.state {
-            case .empty, .paused:
-                action = .pause
-            case .playing:
-                action = .play
-            case let .seeking(_, _, _, currentAction, _):
-                action = currentAction
+        case .empty, .paused:
+            action = .pause
+        case .playing:
+            action = .play
+        case let .seeking(_, _, _, currentAction, _):
+            action = currentAction
         }
         self.seek(timestamp: timestamp, action: action)
     }
@@ -311,22 +319,22 @@ private final class MediaPlayerContext {
                 self.audioRenderer = nil
                 
                 let queue = self.queue
-                renderer = MediaPlayerAudioRenderer(playAndRecord: self.playAndRecord, forceAudioToSpeaker: self.forceAudioToSpeaker, baseRate: self.baseRate, volume: self.volume, timebase: nil, updatedRate: { [weak self] in
+                renderer = MediaPlayerAudioRenderer(playAndRecord: self.playAndRecord, forceAudioToSpeaker: self.forceAudioToSpeaker, baseRate: self.baseRate, volume: self.volume, updatedRate: { [weak self] in
                     queue.async {
                         if let strongSelf = self {
                             strongSelf.tick()
                         }
                     }
-                }, audioPaused: { [weak self] in
-                    queue.async {
-                        if let strongSelf = self {
-                            if strongSelf.enableSound {
-                                strongSelf.pause(lostAudioSession: true)
-                            } else {
-                                strongSelf.seek(timestamp: 0.0, action: .play)
+                    }, audioPaused: { [weak self] in
+                        queue.async {
+                            if let strongSelf = self {
+                                if strongSelf.enableSound {
+                                    strongSelf.pause(lostAudioSession: true)
+                                } else {
+                                    strongSelf.seek(timestamp: 0.0, action: .play)
+                                }
                             }
                         }
-                    }
                 })
                 self.audioRenderer = MediaPlayerAudioRendererContext(renderer: renderer)
                 renderer.start()
@@ -344,36 +352,48 @@ private final class MediaPlayerContext {
             controlTimebase = MediaPlayerControlTimebase(timebase: timebase!, isAudio: false)
         }
         
-        let loadedState = MediaPlayerLoadedState(frameSource: frameSource, mediaBuffers: buffers, controlTimebase: controlTimebase)
-        loadedState.extraVideoFrames = (seekResult.extraDecodedVideoFrames, seekResult.timestamp)
-        self.timebasePromise.set(.single(loadedState.controlTimebase.timebase))
+        var loadedState: MediaPlayerLoadedState? = MediaPlayerLoadedState(frameSource: frameSource, mediaBuffers: buffers, controlTimebase: controlTimebase)
+        loadedState!.extraVideoFrames = (seekResult.extraDecodedVideoFrames, seekResult.timestamp)
+        self.timebasePromise.set(.single(loadedState!.controlTimebase.timebase))
         
         
         if let audioRenderer = self.audioRenderer?.renderer {
             let queue = self.queue
+            
+           
+            
             audioRenderer.flushBuffers(at: seekResult.timestamp, completion: { [weak self] in
                 queue.async { [weak self] in
                     if let strongSelf = self {
-                        switch action {
+                        
+                        if let loadedState = loadedState {
+                            switch action {
                             case .play:
                                 strongSelf.state = .playing(loadedState)
                                 strongSelf.audioRenderer?.renderer.start()
                             case .pause:
                                 strongSelf.state = .paused(loadedState)
+                            }
                         }
-                        
+                       
+
                         strongSelf.lastStatusUpdateTimestamp = nil
                         strongSelf.tick()
+                    } else {
+                        loadedState = nil
                     }
                 }
             })
         } else {
-            switch action {
+            if let loadedState = loadedState {
+                switch action {
                 case .play:
                     self.state = .playing(loadedState)
                 case .pause:
                     self.state = .paused(loadedState)
+                }
             }
+            
             
             self.lastStatusUpdateTimestamp = nil
             self.tick()
@@ -384,16 +404,16 @@ private final class MediaPlayerContext {
         assert(self.queue.isCurrent())
         
         switch self.state {
-            case .empty:
-                self.lastStatusUpdateTimestamp = nil
-                if self.enableSound {
-                    let queue = self.queue
-                    let renderer = MediaPlayerAudioRenderer( playAndRecord: self.playAndRecord, forceAudioToSpeaker: self.forceAudioToSpeaker, baseRate: self.baseRate, volume: self.volume, timebase: self.initialTimebase, updatedRate: { [weak self] in
-                        queue.async {
-                            if let strongSelf = self {
-                                strongSelf.tick()
-                            }
+        case .empty:
+            self.lastStatusUpdateTimestamp = nil
+            if self.enableSound {
+                let queue = self.queue
+                let renderer = MediaPlayerAudioRenderer( playAndRecord: self.playAndRecord, forceAudioToSpeaker: self.forceAudioToSpeaker, baseRate: self.baseRate, volume: self.volume, updatedRate: { [weak self] in
+                    queue.async {
+                        if let strongSelf = self {
+                            strongSelf.tick()
                         }
+                    }
                     }, audioPaused: { [weak self] in
                         queue.async {
                             if let strongSelf = self {
@@ -404,29 +424,29 @@ private final class MediaPlayerContext {
                                 }
                             }
                         }
-                    })
-                    self.audioRenderer = MediaPlayerAudioRendererContext(renderer: renderer)
-                    renderer.start()
-                }
-                self.seek(timestamp: 0.0, action: .play)
-            case let .seeking(frameSource, timestamp, disposable, _, enableSound):
-                self.state = .seeking(frameSource: frameSource, timestamp: timestamp, disposable: disposable, action: .play, enableSound: enableSound)
+                })
+                self.audioRenderer = MediaPlayerAudioRendererContext(renderer: renderer)
+                renderer.start()
+            }
+            self.seek(timestamp: 0.0, action: .play)
+        case let .seeking(frameSource, timestamp, disposable, _, enableSound):
+            self.state = .seeking(frameSource: frameSource, timestamp: timestamp, disposable: disposable, action: .play, enableSound: enableSound)
+            self.lastStatusUpdateTimestamp = nil
+        case let .paused(loadedState):
+            if loadedState.lostAudioSession {
+                let timestamp = CMTimeGetSeconds(CMTimebaseGetTime(loadedState.controlTimebase.timebase))
+                self.seek(timestamp: timestamp, action: .play)
+            } else {
                 self.lastStatusUpdateTimestamp = nil
-            case let .paused(loadedState):
-                if loadedState.lostAudioSession {
-                    let timestamp = CMTimeGetSeconds(CMTimebaseGetTime(loadedState.controlTimebase.timebase))
-                    self.seek(timestamp: timestamp, action: .play)
+                if self.stoppedAtEnd {
+                    self.seek(timestamp: 0.0, action: .play)
                 } else {
-                    self.lastStatusUpdateTimestamp = nil
-                    if self.stoppedAtEnd {
-                        self.seek(timestamp: 0.0, action: .play)
-                    } else {
-                        self.state = .playing(loadedState)
-                        self.tick()
-                    }
+                    self.state = .playing(loadedState)
+                    self.tick()
                 }
-            case .playing:
-                break
+            }
+        case .playing:
+            break
         }
     }
     
@@ -474,19 +494,19 @@ private final class MediaPlayerContext {
             
             var loadedState: MediaPlayerLoadedState?
             switch self.state {
-                case .empty:
-                    break
-                case let .playing(currentLoadedState):
-                    loadedState = currentLoadedState
-                case let .paused(currentLoadedState):
-                    loadedState = currentLoadedState
-                case let .seeking(_, timestamp, disposable, action, _):
-                    if self.enableSound {
-                        self.state = .empty
-                        disposable.dispose()
-                        self.enableSound = false
-                        self.seek(timestamp: timestamp, action: action)
-                    }
+            case .empty:
+                break
+            case let .playing(currentLoadedState):
+                loadedState = currentLoadedState
+            case let .paused(currentLoadedState):
+                loadedState = currentLoadedState
+            case let .seeking(_, timestamp, disposable, action, _):
+                if self.enableSound {
+                    self.state = .empty
+                    disposable.dispose()
+                    self.enableSound = false
+                    self.seek(timestamp: timestamp, action: action)
+                }
             }
             
             if let loadedState = loadedState {
@@ -519,17 +539,17 @@ private final class MediaPlayerContext {
             
             var isPlaying = false
             switch self.state {
-                case .playing:
+            case .playing:
+                isPlaying = true
+            case let .seeking(_, _, _, action, _):
+                switch action {
+                case .play:
                     isPlaying = true
-                case let .seeking(_, _, _, action, _):
-                    switch action {
-                        case .play:
-                            isPlaying = true
-                        default:
-                            break
-                    }
                 default:
                     break
+                }
+            default:
+                break
             }
             if value && !isPlaying {
                 self.audioRenderer?.renderer.stop()
@@ -543,22 +563,22 @@ private final class MediaPlayerContext {
         assert(self.queue.isCurrent())
         
         switch self.state {
-            case .empty:
-                break
-            case let .seeking(frameSource, timestamp, disposable, _, enableSound):
-                self.state = .seeking(frameSource: frameSource, timestamp: timestamp, disposable: disposable, action: .pause, enableSound: enableSound)
-                self.lastStatusUpdateTimestamp = nil
-            case let .paused(loadedState):
-                if lostAudioSession {
-                    loadedState.lostAudioSession = true
-                }
-            case let .playing(loadedState):
-                if lostAudioSession {
-                    loadedState.lostAudioSession = true
-                }
-                self.state = .paused(loadedState)
-                self.lastStatusUpdateTimestamp = nil
-                self.tick()
+        case .empty:
+            break
+        case let .seeking(frameSource, timestamp, disposable, _, enableSound):
+            self.state = .seeking(frameSource: frameSource, timestamp: timestamp, disposable: disposable, action: .pause, enableSound: enableSound)
+            self.lastStatusUpdateTimestamp = nil
+        case let .paused(loadedState):
+            if lostAudioSession {
+                loadedState.lostAudioSession = true
+            }
+        case let .playing(loadedState):
+            if lostAudioSession {
+                loadedState.lostAudioSession = true
+            }
+            self.state = .paused(loadedState)
+            self.lastStatusUpdateTimestamp = nil
+            self.tick()
         }
     }
     
@@ -567,19 +587,19 @@ private final class MediaPlayerContext {
         assert(self.queue.isCurrent())
         
         switch self.state {
-            case .empty:
-                self.play()
-            case let .seeking(_, _, _, action, _):
-                switch action {
-                    case .play:
-                        self.pause(lostAudioSession: false)
-                    case .pause:
-                        self.play()
-                }
-            case .paused:
-                self.play()
-            case .playing:
+        case .empty:
+            self.play()
+        case let .seeking(_, _, _, action, _):
+            switch action {
+            case .play:
                 self.pause(lostAudioSession: false)
+            case .pause:
+                self.play()
+            }
+        case .paused:
+            self.play()
+        case .playing:
+            self.pause(lostAudioSession: false)
         }
     }
     
@@ -611,14 +631,14 @@ private final class MediaPlayerContext {
         var maybeLoadedState: MediaPlayerLoadedState?
         
         switch self.state {
-            case .empty:
-                return
-            case let .paused(state):
-                maybeLoadedState = state
-            case let .playing(state):
-                maybeLoadedState = state
-            case .seeking:
-                return
+        case .empty:
+            return
+        case let .paused(state):
+            maybeLoadedState = state
+        case let .playing(state):
+            maybeLoadedState = state
+        case .seeking:
+            return
         }
         
         guard let loadedState = maybeLoadedState else {
@@ -786,26 +806,26 @@ private final class MediaPlayerContext {
             let status = MediaPlayerStatus(generationTimestamp: statusTimestamp, duration: duration, dimensions: CGSize(), timestamp: min(max(reportTimestamp, 0.0), duration), baseRate: self.baseRate, volume: self.volume, seekId: self.seekId, status: playbackStatus)
             self.playerStatus.set(status)
         }
-
+        
         
         if performActionAtEndNow {
             switch self.actionAtEnd {
-                case let .loop(f):
-                    self.stoppedAtEnd = false
-                    self.seek(timestamp: 0.0, action: .play)
-                    f?()
-                case .stop:
-                    self.stoppedAtEnd = true
-                    self.pause(lostAudioSession: false)
-                case let .action(f):
-                    self.stoppedAtEnd = true
-                  //  self.pause(lostAudioSession: false)
-                    f()
-                case let .loopDisablingSound(f):
-                    self.stoppedAtEnd = false
-                    self.enableSound = false
-                    self.seek(timestamp: 0.0, action: .play)
-                    f()
+            case let .loop(f):
+                self.stoppedAtEnd = false
+                self.seek(timestamp: 0.0, action: .play)
+                f?()
+            case .stop:
+                self.stoppedAtEnd = true
+                self.pause(lostAudioSession: false)
+            case let .action(f):
+                self.stoppedAtEnd = true
+                //  self.pause(lostAudioSession: false)
+                f()
+            case let .loopDisablingSound(f):
+                self.stoppedAtEnd = false
+                self.enableSound = false
+                self.seek(timestamp: 0.0, action: .play)
+                f()
             }
         } else {
             self.stoppedAtEnd = false
@@ -820,24 +840,24 @@ enum MediaPlayerPlaybackStatus: Equatable {
     
     static func ==(lhs: MediaPlayerPlaybackStatus, rhs: MediaPlayerPlaybackStatus) -> Bool {
         switch lhs {
-            case .playing:
-                if case .playing = rhs {
-                    return true
-                } else {
-                    return false
-                }
-            case .paused:
-                if case .paused = rhs {
-                    return true
-                } else {
-                    return false
-                }
-            case let .buffering(initial, whilePlaying):
-                if case .buffering(initial, whilePlaying) = rhs {
-                    return true
-                } else {
-                    return false
-                }
+        case .playing:
+            if case .playing = rhs {
+                return true
+            } else {
+                return false
+            }
+        case .paused:
+            if case .paused = rhs {
+                return true
+            } else {
+                return false
+            }
+        case let .buffering(initial, whilePlaying):
+            if case .buffering(initial, whilePlaying) = rhs {
+                return true
+            } else {
+                return false
+            }
         }
     }
 }
@@ -853,9 +873,12 @@ struct MediaPlayerStatus: Equatable {
     let status: MediaPlayerPlaybackStatus
 }
 
+let playerQueue = Queue()
+
+
 final class MediaPlayer {
-    private let queue = Queue()
-    private var contextRef: Unmanaged<MediaPlayerContext>?
+        
+    private var contextRef: QueueLocalObject<MediaPlayerContext>
     
     private let timebasePromise:Promise<CMTimebase?> = Promise()
     
@@ -864,7 +887,7 @@ final class MediaPlayer {
     }
     
     private let statusValue = ValuePromise<MediaPlayerStatus>(ignoreRepeated: true)
-
+    
     var status: Signal<MediaPlayerStatus, NoError> {
         return self.statusValue.get()
     }
@@ -872,147 +895,119 @@ final class MediaPlayer {
     var actionAtEnd: MediaPlayerActionAtEnd = .stop {
         didSet {
             let value = self.actionAtEnd
-            self.queue.async {
-                if let context = self.contextRef?.takeUnretainedValue() {
-                    context.actionAtEnd = value
-                }
+            contextRef.with { context in
+                context.actionAtEnd = value
             }
         }
     }
     
     init(postbox: Postbox, reference: MediaResourceReference, streamable: Bool, video: Bool, preferSoftwareDecoding: Bool, playAutomatically: Bool = false, enableSound: Bool, baseRate: Double = 1.0, volume: Float = 0.8, fetchAutomatically: Bool, playAndRecord: Bool = false, keepAudioSessionWhilePaused: Bool = true, initialTimebase: CMTimebase? = nil) {
-        self.queue.async {
-            self.statusValue.set(MediaPlayerStatus(generationTimestamp: 0.0, duration: 0.0, dimensions: CGSize(), timestamp: 0.0, baseRate: baseRate, volume: volume, seekId: 0, status: .paused))
-            let context = MediaPlayerContext(queue: self.queue, playerStatus: self.statusValue, postbox: postbox, resourceReference: reference, streamable: streamable, video: video, preferSoftwareDecoding: preferSoftwareDecoding, playAutomatically: playAutomatically, enableSound: enableSound, baseRate: baseRate, volume: volume, fetchAutomatically: fetchAutomatically, playAndRecord: playAndRecord, keepAudioSessionWhilePaused: keepAudioSessionWhilePaused, initialTimebase: initialTimebase)
-            self.contextRef = Unmanaged.passRetained(context)
-            self.timebasePromise.set(context.timebasePromise.get())
-        }
+        
+        self.statusValue.set(MediaPlayerStatus(generationTimestamp: 0.0, duration: 0.0, dimensions: CGSize(), timestamp: 0.0, baseRate: baseRate, volume: volume, seekId: 0, status: .paused))
+        
+        let statusValue = self.statusValue
+        
+        self.contextRef = QueueLocalObject(queue: playerQueue, generate: {
+            return MediaPlayerContext(queue: playerQueue, playerStatus: statusValue, postbox: postbox, resourceReference: reference, streamable: streamable, video: video, preferSoftwareDecoding: preferSoftwareDecoding, playAutomatically: playAutomatically, enableSound: enableSound, baseRate: baseRate, volume: volume, fetchAutomatically: fetchAutomatically, playAndRecord: playAndRecord, keepAudioSessionWhilePaused: keepAudioSessionWhilePaused, initialTimebase: initialTimebase)
+
+        })
+        
+        let timebasePromise = self.timebasePromise
+        self.contextRef.with({ context in
+            timebasePromise.set(context.timebasePromise.get())
+        })
+
     }
     
-
+    
     
     deinit {
-        let contextRef = self.contextRef
-        self.queue.async {
-            contextRef?.release()
-        }
+        
     }
     
     func play() {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.play()
-            }
+        contextRef.with {
+            $0.play()
         }
     }
     
     func playOnceWithSound(playAndRecord: Bool) {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.playOnceWithSound(playAndRecord: playAndRecord)
-            }
+        contextRef.with {
+            $0.playOnceWithSound(playAndRecord: playAndRecord)
         }
     }
     
     func toggleSoundEnabled() {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.toggleSoundEnabled()
-            }
+        contextRef.with {
+            $0.toggleSoundEnabled()
         }
     }
     
     func continuePlayingWithoutSound() {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.continuePlayingWithoutSound()
-            }
+        contextRef.with {
+            $0.continuePlayingWithoutSound()
         }
     }
     
     func setForceAudioToSpeaker(_ value: Bool) {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.setForceAudioToSpeaker(value)
-            }
+        contextRef.with { context in
+            context.setForceAudioToSpeaker(value)
         }
     }
     
     func setKeepAudioSessionWhilePaused(_ value: Bool) {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.setKeepAudioSessionWhilePaused(value)
-            }
+        contextRef.with { context in
+            context.setKeepAudioSessionWhilePaused(value)
         }
     }
     
     func pause() {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.pause(lostAudioSession: false)
-            }
+        contextRef.with { context in
+            context.pause(lostAudioSession: false)
         }
     }
     
     func togglePlayPause() {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.togglePlayPause()
-            }
+        contextRef.with { context in
+            context.togglePlayPause()
         }
     }
     
     func setVolume(_ volume: Float) {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.setVolume(volume)
-            }
+        contextRef.with { context in
+            context.setVolume(volume)
         }
     }
     
     func toggleVolumeOnOff() {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.toggleVolumeOnOff()
-            }
+        contextRef.with { context in
+            context.toggleVolumeOnOff()
         }
     }
     
     func getVolume(_ completion: @escaping(Float) -> Void) {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.getVolume(completion)
-            }
+        contextRef.with { context in
+            context.getVolume(completion)
         }
     }
     
     func seek(timestamp: Double) {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.seek(timestamp: timestamp)
-            }
+        contextRef.with { context in
+            context.seek(timestamp: timestamp)
         }
     }
     
     
     func setBaseRate(_ baseRate: Double) {
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.setBaseRate(baseRate)
-            }
+        contextRef.with { context in
+            context.setBaseRate(baseRate)
         }
     }
     
     func attachPlayerView(_ node: MediaPlayerView) {
         let nodeRef: Unmanaged<MediaPlayerView> = Unmanaged.passRetained(node)
-        self.queue.async {
-            if let context = self.contextRef?.takeUnretainedValue() {
-                context.videoRenderer.attachNodeAndRelease(nodeRef)
-            } else {
-                Queue.mainQueue().async {
-                    nodeRef.release()
-                }
-            }
+        contextRef.with { context in
+            context.videoRenderer.attachNodeAndRelease(nodeRef)
         }
     }
 }

@@ -14,7 +14,10 @@ import SyncCore
 import TGUIKit
 
 
-class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvider {
+class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvider, PinchableView {
+
+    
+    
     
     private var acceptDragging:Bool = false
     private var inDragging:Bool = false
@@ -94,7 +97,17 @@ class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvi
     }
     
     func cancelFetching() {
-        
+        if let context = context, let media = media {
+            if let parent = parent, let parameters = parameters {
+                parameters.cancelOperation(parent, media)
+            } else {
+                if let media = media as? TelegramMediaFile {
+                    cancelFreeMediaFileInteractiveFetch(context: context, resource: media.resource)
+                } else if let media = media as? TelegramMediaImage {
+                    chatMessagePhotoCancelInteractiveFetch(account: context.account, photo: media)
+                }
+            }
+        }
     }
     
     func open() -> Void {
@@ -114,7 +127,7 @@ class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvi
     }
     
     func executeInteraction(_ isControl:Bool) -> Void {
-        if let fetchStatus = self.fetchStatus {
+        if let fetchStatus = self.fetchStatus, userInteractionEnabled {
             switch fetchStatus {
             case .Fetching:
                 if isControl {
@@ -143,6 +156,10 @@ class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvi
         self.clean()
         dragDisposable.dispose()
     }
+     
+     func update(size: NSSize) {
+         
+     }
     
     func update(with media: Media, size:NSSize, context:AccountContext, parent:Message?, table:TableView?, parameters:ChatMediaLayoutParameters? = nil, animated: Bool = false, positionFlags: LayoutPositionFlags? = nil, approximateSynchronousValue: Bool = false) -> Void  {
         self.setContent(size: size)
@@ -241,9 +258,9 @@ class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvi
             inDragging = false
             dragpath = nil
             mouseDownPoint = convert(event.locationInWindow, from: nil)
-            acceptDragging = draggingAbility(event) && parent != nil
+            acceptDragging = draggingAbility(event) && parent != nil && !parent!.containsSecretMedia
             
-            if let parent = parent, parent.id.peerId.id == Namespaces.Peer.SecretChat {
+            if let parent = parent, parent.id.peerId.namespace == Namespaces.Peer.SecretChat {
                 acceptDragging = false
             }
         }
@@ -267,6 +284,7 @@ class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvi
     
     func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
         if let dragpath = dragpath {
+            pasteboard?.clearContents()
             pasteboard?.declareTypes([.kFilenames, .string], owner: self)
             pasteboard?.setPropertyList([dragpath], forType: .kFilenames)
             pasteboard?.setString(dragpath, forType: .string)
@@ -320,9 +338,11 @@ class ChatMediaContentView: Control, NSDraggingSource, NSPasteboardItemDataProvi
                 }
                 
             } else {
-                super.mouseDragged(with: event)
+                super.superview?.mouseDragged(with: event)
             }
             
+        } else {
+            super.mouseDragged(with: event)
         }
         
     }

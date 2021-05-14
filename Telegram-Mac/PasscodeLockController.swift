@@ -314,8 +314,10 @@ class PasscodeLockController: ModalViewController {
         return self.view as! PasscodeLockView
     }
     
-    private func checkNextValue(_ passcode: String, _ current:String?) {
-        if current == passcode {
+    private func checkNextValue(_ passcode: String) {
+        let appEncryption = AppEncryptionParameters(path: accountManager.basePath.nsstring.deletingLastPathComponent)
+        appEncryption.applyPasscode(passcode)
+        if appEncryption.decrypt() != nil {
             self._doneValue.set(.single(true))
             self.close()
             
@@ -375,7 +377,6 @@ class PasscodeLockController: ModalViewController {
             
             confirm(for: window, information: L10n.accountConfirmLogoutText, successHandler: { [weak self] _ in
                 guard let `self` = self else { return }
-                
                 _ = showModalProgress(signal: self.logoutImpl(), for: window).start(completed: { [weak self] in
                     delay(0.2, closure: { [weak self] in
                         self?.close()
@@ -388,20 +389,9 @@ class PasscodeLockController: ModalViewController {
         genericView.useTouchIdImpl = { [weak self] in
             self?.callTouchId()
         }
-        
-        let accountManager = self.accountManager
-        
-        valueDisposable.set((genericView.value.get() |> mapToSignal { value in
-            return accountManager.transaction { transaction -> (String, String?) in
-                switch transaction.getAccessChallengeData() {
-                case .none:
-                    return (value, nil)
-                case let .plaintextPassword(passcode), let .numericalPassword(passcode):
-                    return (value, passcode)
-                }
-            }
-        } |> deliverOnMainQueue).start(next: { [weak self] value, current in
-            self?.checkNextValue(value, current)
+                
+        valueDisposable.set((genericView.value.get() |> deliverOnMainQueue).start(next: { [weak self] value in
+            self?.checkNextValue(value)
         }))
         
         genericView.update(hasTouchId: useTouchId)

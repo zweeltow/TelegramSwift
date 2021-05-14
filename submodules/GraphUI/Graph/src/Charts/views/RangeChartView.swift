@@ -275,14 +275,18 @@ private extension RangeChartView {
 }
 
 extension RangeChartView: ChartThemeContainer {
-    func apply(theme: ChartTheme, animated: Bool) {
+    func apply(theme: ChartTheme, strings: ChartStrings, animated: Bool) {
         let closure = {
             self.lowerBoundTintView.backgroundColor = theme.rangeViewTintColor
             self.upperBoundTintView.backgroundColor = theme.rangeViewTintColor
         }
         
-        self.cropFrameView.setImage(theme.rangeCropImage, animated: animated)
+        let rangeCropImage = theme.rangeCropImage
+        rangeCropImage?.resizingMode = .stretch
+        rangeCropImage?.capInsets = NSEdgeInsets(top: 15, left: 15, bottom: 15, right: 15)
         
+        self.cropFrameView.setImage(rangeCropImage, animated: animated)
+
         //        self.chartView.apply(theme: theme, animated: animated)
         
         if animated {

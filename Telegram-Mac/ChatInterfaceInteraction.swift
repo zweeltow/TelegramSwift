@@ -30,10 +30,7 @@ final class ChatInteraction : InterfaceObserver  {
     let chatLocation: ChatLocation
     let mode: ChatMode
     var peerId : PeerId {
-        switch chatLocation {
-        case let .peer(peerId):
-            return peerId
-        }
+        return chatLocation.peerId
     }
     
     var peer: Peer? {
@@ -58,7 +55,7 @@ final class ChatInteraction : InterfaceObserver  {
         self.disableSelectAbility = disableSelectAbility
         self.isLogInteraction = isLogInteraction
         self.isGlobalSearchMessage = isGlobalSearchMessage
-        self.presentation = ChatPresentationInterfaceState(chatLocation)
+        self.presentation = ChatPresentationInterfaceState(chatLocation: chatLocation, chatMode: mode)
         self.mode = mode
         super.init()
         
@@ -86,18 +83,20 @@ final class ChatInteraction : InterfaceObserver  {
     var beginMessageSelection: (MessageId?) -> Void = {_ in}
     var deleteMessages: ([MessageId]) -> Void = {_ in }
     var forwardMessages: ([MessageId]) -> Void = {_ in}
+    var reportMessages:(ReportReasonValue, [MessageId]) -> Void = { _, _ in }
     var sendMessage: (Bool, Date?) -> Void = { _, _ in }
     var sendPlainText: (String) -> Void = {_ in}
 
     //
     var focusMessageId: (MessageId?, MessageId, TableScrollState) -> Void = {_,_,_  in} // from, to, animated, position
+    var focusPinnedMessageId: (MessageId) -> Void = { _ in} // from, to, animated, position
     var sendMedia:([MediaSenderContainer]) -> Void = {_ in}
-    var sendAppFile:(TelegramMediaFile, Bool) -> Void = { _,_ in}
+    var sendAppFile:(TelegramMediaFile, Bool, String?) -> Void = { _,_, _ in}
     var sendMedias:([Media], ChatTextInputState, Bool, ChatTextInputState?, Bool, Date?) -> Void = {_,_,_,_,_,_ in}
     var focusInputField:()->Void = {}
     var openInfo:(PeerId, Bool, MessageId?, ChatInitialAction?) -> Void = {_,_,_,_  in} // peerId, isNeedOpenChat, postId, initialAction
     var beginEditingMessage:(Message?) -> Void = {_ in}
-    var requestMessageActionCallback:(MessageId, Bool, MemoryBuffer?) -> Void = {_,_,_  in}
+    var requestMessageActionCallback:(MessageId, Bool, (requiresPassword: Bool, data: MemoryBuffer)?) -> Void = {_,_,_  in}
     var inlineAudioPlayer:(APController) -> Void = {_ in} 
     var movePeerToInput:(Peer) -> Void = {_ in}
     var sendInlineResult:(ChatContextResultCollection,ChatContextResult) -> Void = {_,_  in}
@@ -109,14 +108,14 @@ final class ChatInteraction : InterfaceObserver  {
     var setNavigationAction:(NavigationModalAction)->Void = {_ in}
     var switchInlinePeer:(PeerId, ChatInitialAction)->Void = {_,_  in}
     var showPreviewSender:([URL], Bool, NSAttributedString?)->Void = {_,_,_  in}
-    var setSecretChatMessageAutoremoveTimeout:(Int32?)->Void = {_ in}
+    var setChatMessageAutoremoveTimeout:(Int32?)->Void = {_ in}
     var toggleNotifications:(Bool?)->Void = { _ in }
     var removeAndCloseChat:()->Void = {}
     var joinChannel:()->Void = {}
     var returnGroup:()->Void = {}
     var shareContact:(TelegramUser)->Void = {_ in}
     var unblock:()->Void = {}
-    var updatePinned:(MessageId, Bool, Bool)->Void = {_,_,_ in}
+    var updatePinned:(MessageId, Bool, Bool, Bool)->Void = {_,_,_,_ in}
     var reportSpamAndClose:()->Void = {}
     var dismissPeerStatusOptions:()->Void = {}
     var toggleSidebar:()->Void = {}
@@ -144,15 +143,95 @@ final class ChatInteraction : InterfaceObserver  {
     var blockContact: ()->Void = {}
     var openScheduledMessages: ()->Void = {}
     var openBank: (String)->Void = { _ in }
-    
     var getGradientOffsetRect:()->NSRect = {  return .zero }
+    var contextHolder:()->Atomic<ChatLocationContextHolder?> = { Atomic(value: nil) }
+    
+    var push:(ViewController)->Void = { _ in }
+    var back:()->Void = { }
 
+    var openPinnedMessages: (MessageId)->Void = { _ in }
+    var unpinAllMessages: ()->Void = {}
+    var setLocation: (ChatHistoryLocation)->Void = { _ in }
+    var scrollToTheFirst: () -> Void = {}
+    var openReplyThread:(MessageId, Bool, Bool, ReplyThreadMode)->Void = {  _, _, _, _ in }
+    
+    var joinGroupCall:(CachedChannelData.ActiveCall, String?)->Void = { _, _ in }
+
+    var showDeleterSetup:(Control)->Void = { _ in }
+
+    func chatLocationInput() -> ChatLocationInput {
+        return context.chatLocationInput(for: self.chatLocation, contextHolder: contextHolder())
+    }
+    
+    var unarchive: ()->Void = { }
+
+    var closeAfterPeek:(Int32)->Void = { _ in }
+    
     var updateReactions: (MessageId, String, @escaping(Bool)->Void)->Void = { _, _, _ in }
     
     let loadingMessage: Promise<Bool> = Promise()
     let mediaPromise:Promise<[MediaSenderContainer]> = Promise()
     
-    
+    var hasSetDestructiveTimer: Bool {
+        
+        if mode != .history {
+            return false
+        }
+        
+        if !self.presentation.interfaceState.inputState.inputText.isEmpty {
+            return false
+        }
+        if self.peerId.namespace == Namespaces.Peer.SecretChat {
+            return true
+        }
+        if let value = self.presentation.messageSecretTimeout {
+            switch value {
+            case let .known(value):
+                if value != nil {
+                    return true
+                }
+            default:
+                return false
+            }
+        }
+
+        return false
+    }
+
+    /*
+     var hasSetDestructiveTimer: Bool {
+         if self.peerId.namespace == Namespaces.Peer.SecretChat {
+             return true
+         }
+         if let peer = presentation.peer {
+             if let peer = peer as? TelegramChannel, peer.isSupergroup {
+                 return peer.groupAccess.canEditGroupInfo
+             }
+             if let value = self.presentation.messageSecretTimeout {
+                 switch value {
+                 case let .known(value):
+                     if value != nil {
+                         return true
+                     }
+                 default:
+                     return false
+                 }
+             }
+             if let peer = peer as? TelegramGroup {
+                 switch peer.role {
+                 case .admin, .creator:
+                     return true
+                 default:
+                     break
+                 }
+             }
+         }
+
+         return false
+     }
+
+
+     */
     
     
     func disableProxy() {
@@ -270,7 +349,7 @@ final class ChatInteraction : InterfaceObserver  {
                     self.update({$0.updatedInterfaceState({$0.updatedEditState({$0?.withUpdatedLoadingState(.none)})})})
                     return
                 default:
-                    if oldState.inputState.attributedString != editState.inputState.attributedString {
+                    if oldState.inputState.attributedString != editState.inputState.attributedString, !editState.inputState.attributedString.string.isEmpty {
                         confirm(for: context.window, information: L10n.chatEditCancelText, okTitle: L10n.alertDiscard, cancelTitle: L10n.alertNO, successHandler: { [weak self] _ in
                             self?.update({$0.withoutEditMessage().updatedUrlPreview(nil)})
                         })
@@ -334,13 +413,64 @@ final class ChatInteraction : InterfaceObserver  {
                         $0.withoutInitialAction()
                     })
                 }
-            case let .forward(messageIds, text, _):
-                update(animated: animated, {$0.updatedInterfaceState({$0.withUpdatedForwardMessageIds(messageIds).withUpdatedInputState(text != nil ? ChatTextInputState(inputText: text!) : $0.inputState)})})
+            case let .forward(messageIds, inputState, _):
+                update(animated: animated, {$0.updatedInterfaceState({$0.withUpdatedForwardMessageIds(messageIds).withUpdatedInputState(inputState ?? $0.inputState)})})
                 update({
                     $0.withoutInitialAction()
                 })
             case .ad:
                 break
+            case .source:
+                break
+            case let .closeAfter(peek):
+               break
+            case let .selectToReport(reason):
+                update(animated: animated, {
+                    $0.withSelectionState().withoutInitialAction().withUpdatedRepotMode(reason)
+                })
+            case let .joinVoiceChat(joinHash):
+                update(animated: animated, {
+                    $0.updatedGroupCall { $0?.withUpdatedJoinHash(joinHash) }.withoutInitialAction()
+                })
+                
+                let peerId = self.peerId
+                let context = self.context
+                
+                let joinCall:(GroupCallPanelData)->Void = { [weak self] data in
+                    if data.groupCall?.call.peerId != peerId, let peer = self?.peer {
+                        showModal(with: JoinVoiceChatAlertController(context: context, groupCall: data, peer: peer, join: { [weak self] in
+                            if let call = data.info {
+                                self?.joinGroupCall(CachedChannelData.ActiveCall(id: call.id, accessHash: call.accessHash, title: call.title, scheduleTimestamp: call.scheduleTimestamp, subscribedToScheduled: call.subscribedToScheduled), joinHash)
+                            }
+                        }), for: context.window)
+                    } else {
+                        if let call = data.info {
+                            self?.joinGroupCall(CachedChannelData.ActiveCall(id: call.id, accessHash: call.accessHash, title: call.title, scheduleTimestamp: call.scheduleTimestamp, subscribedToScheduled: call.subscribedToScheduled), joinHash)
+                        }
+                    }
+                }
+                let call: Signal<GroupCallPanelData?, GetCurrentGroupCallError> = updatedCurrentPeerGroupCall(account: context.account, peerId: peerId) |> mapToSignalPromotingError { call -> Signal<GroupCallSummary?, GetCurrentGroupCallError> in
+                    if let call = call {
+                        return getCurrentGroupCall(account: context.account, callId: call.id, accessHash: call.accessHash, peerId: peerId)
+                    } else {
+                        return .single(nil)
+                    }
+                } |> mapToSignal { data in
+                    if let data = data {
+                        return context.sharedContext.groupCallContext |> take(1) |> mapToSignalPromotingError { groupCallContext in
+                            return .single(GroupCallPanelData(peerId: peerId, info: data.info, topParticipants: data.topParticipants, participantCount: data.info.participantCount, activeSpeakers: [], groupCall: groupCallContext))
+                        }
+                    } else {
+                        return .single(nil)
+                    }
+                }
+                _ = showModalProgress(signal: call, for: context.window).start(next: {  data in
+                    if let data = data {
+                        joinCall(data)
+                    } else {
+                        alert(for: context.window, info: L10n.chatVoiceChatJoinLinkUnavailable)
+                    }
+                })
             }
            
         }
@@ -356,7 +486,7 @@ final class ChatInteraction : InterfaceObserver  {
                     case let .url(url):
                         execute(inapp: inApp(for: url.nsstring, context: strongSelf.context, openInfo: strongSelf.openInfo, hashtag: strongSelf.modalSearch, command: strongSelf.sendPlainText, applyProxy: strongSelf.applyProxy))
                     case .text:
-                        _ = (enqueueMessages(context: strongSelf.context, peerId: strongSelf.peerId, messages: [EnqueueMessage.message(text: button.title, attributes: [], mediaReference: nil, replyToMessageId: strongSelf.presentation.interfaceState.messageActionsState.processedSetupReplyMessageId, localGroupingKey: nil)]) |> deliverOnMainQueue).start(next: { [weak strongSelf] _ in
+                        _ = (enqueueMessages(account: strongSelf.context.account, peerId: strongSelf.peerId, messages: [EnqueueMessage.message(text: button.title, attributes: [], mediaReference: nil, replyToMessageId: strongSelf.presentation.interfaceState.messageActionsState.processedSetupReplyMessageId, localGroupingKey: nil, correlationId: nil)]) |> deliverOnMainQueue).start(next: { [weak strongSelf] _ in
                             strongSelf?.scrollToLatest(true)
                         })
                     case .requestPhone:
@@ -386,10 +516,16 @@ final class ChatInteraction : InterfaceObserver  {
                             
                         }
                     case .payment:
-                        alert(for: strongSelf.context.window, info: L10n.paymentsUnsupported)
+                        let receiptMessageId = (keyboardMessage.media.first as? TelegramMediaInvoice)?.receiptMessageId
+                        if let receiptMessageId = receiptMessageId {
+                            showModal(with: PaymentsReceiptController(context: strongSelf.context, messageId: receiptMessageId, message: keyboardMessage), for: strongSelf.context.window)
+                        } else {
+                            showModal(with: PaymentsCheckoutController(context: strongSelf.context, message: keyboardMessage), for: strongSelf.context.window)
+                        }
                     case let .urlAuth(url, buttonId):
                         let context = strongSelf.context
-                        _ = showModalProgress(signal: requestMessageActionUrlAuth(account: strongSelf.context.account, messageId: keyboardMessage.id, buttonId: buttonId), for: context.window).start(next: { result in
+                        
+                        _ = showModalProgress(signal: requestMessageActionUrlAuth(account: context.account, subject: .message(id: keyboardMessage.id, buttonId: buttonId)), for: context.window).start(next: { result in
                             switch result {
                             case let .accepted(url):
                                 execute(inapp: inApp(for: url.nsstring, context: strongSelf.context, openInfo: strongSelf.openInfo, hashtag: strongSelf.modalSearch, command: strongSelf.sendPlainText, applyProxy: strongSelf.applyProxy))
@@ -397,7 +533,7 @@ final class ChatInteraction : InterfaceObserver  {
                                 execute(inapp: inApp(for: url.nsstring, context: strongSelf.context, openInfo: strongSelf.openInfo, hashtag: strongSelf.modalSearch, command: strongSelf.sendPlainText, applyProxy: strongSelf.applyProxy, confirm: true))
                             case let .request(requestURL, peer, writeAllowed):
                                 showModal(with: InlineLoginController(context: context, url: requestURL, originalURL: url, writeAllowed: writeAllowed, botPeer: peer, authorize: { allowWriteAccess in
-                                    _ = showModalProgress(signal: acceptMessageActionUrlAuth(account: context.account, messageId: keyboardMessage.id, buttonId: buttonId, allowWriteAccess: allowWriteAccess), for: context.window).start(next: { result in
+                                    _ = showModalProgress(signal: acceptMessageActionUrlAuth(account: context.account, subject: .message(id: keyboardMessage.id, buttonId: buttonId), allowWriteAccess: allowWriteAccess), for: context.window).start(next: { result in
                                         switch result {
                                         case .default:
                                             execute(inapp: inApp(for: url.nsstring, context: strongSelf.context, openInfo: strongSelf.openInfo, hashtag: strongSelf.modalSearch, command: strongSelf.sendPlainText, applyProxy: strongSelf.applyProxy, confirm: true))
@@ -428,11 +564,10 @@ final class ChatInteraction : InterfaceObserver  {
     
     public func saveState(_ force:Bool = true, scrollState: ChatInterfaceHistoryScrollState? = nil) {
         
-        
         let timestamp = Int32(Date().timeIntervalSince1970)
         let interfaceState = presentation.interfaceState.withUpdatedTimestamp(timestamp).withUpdatedHistoryScrollState(scrollState)
         
-        var s:Signal<Void, NoError> = updatePeerChatInterfaceState(account: context.account, peerId: peerId, state: interfaceState)
+        var s:Signal<Void, NoError> = updatePeerChatInterfaceState(account: context.account, peerId: peerId, threadId: mode.threadId64, state: interfaceState)
         if !force && !interfaceState.inputState.inputText.isEmpty {
             s = s |> delay(10, queue: Queue.mainQueue())
         }
@@ -447,6 +582,7 @@ final class ChatInteraction : InterfaceObserver  {
     }
     
     func clean() {
+        
         addContactDisposable.dispose()
         mediaDisposable.dispose()
         startBotDisposable.dispose()
@@ -454,6 +590,9 @@ final class ChatInteraction : InterfaceObserver  {
         disableProxyDisposable.dispose()
         enableProxyDisposable.dispose()
         editDisposable.dispose()
+        update({ _ in
+            return ChatPresentationInterfaceState(chatLocation: self.chatLocation, chatMode: self.mode)
+        })
     }
     
     

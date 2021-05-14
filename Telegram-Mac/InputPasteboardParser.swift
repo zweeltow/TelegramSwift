@@ -12,6 +12,7 @@ import SyncCore
 import SwiftSignalKit
 import Postbox
 import TGUIKit
+
 class InputPasteboardParser: NSObject {
 
     
@@ -26,7 +27,24 @@ class InputPasteboardParser: NSObject {
                 if let path = path, let url = URL(string: path) {
                     files.append(url)
                 }
-                
+//                if let type = item.availableType(from: [.html]), let data = item.data(forType: type) {
+//                   let attributed = NSAttributedString(html: data, documentAttributes: nil)
+//                   if let attributed = attributed, let attachment = attributed.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment {
+//
+//                       if let fileWrapper = attachment.fileWrapper, let fileName = fileWrapper.preferredFilename, fileWrapper.isRegularFile {
+//                           if let data = fileWrapper.regularFileContents {
+//                               let url = URL(fileURLWithPath: NSTemporaryDirectory() + "\(arc4random())_" + fileName)
+//                               do {
+//                                   try data.write(to: url)
+//                                   files.append(url)
+//                               } catch {
+//
+//                               }
+//
+//                           }
+//                       }
+//                   }
+//               }
             }
             
             var image:NSImage? = nil
@@ -40,7 +58,7 @@ class InputPasteboardParser: NSObject {
             
             files = files.filter { path -> Bool in
                 if let size = fs(path.path) {
-                    return size <= 1500 * 1024 * 1024
+                    return size <= 2000 * 1024 * 1024
                 }
                 
                 return false
@@ -89,7 +107,7 @@ class InputPasteboardParser: NSObject {
             
             files = files.filter { path -> Bool in
                 if let size = fileSize(path.path) {
-                    return size <= 1500 * 1024 * 1024
+                    return size <= 2000 * 1024 * 1024
                 }
                 
                 return false
@@ -125,6 +143,24 @@ class InputPasteboardParser: NSObject {
                 if let path = path, let url = URL(string: path) {
                     files.append(url)
                 }
+//                if let type = item.availableType(from: [.html]), let data = item.data(forType: type) {
+//                    let attributed = NSAttributedString(html: data, documentAttributes: nil)
+//                    if let attributed = attributed, let attachment = attributed.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment {
+//
+//                        if let fileWrapper = attachment.fileWrapper, let fileName = fileWrapper.preferredFilename, fileWrapper.isRegularFile {
+//                            if let data = fileWrapper.regularFileContents {
+//                                let url = URL(fileURLWithPath: NSTemporaryDirectory() + "\(arc4random())_" + fileName)
+//                                do {
+//                                    try data.write(to: url)
+//                                    files.append(url)
+//                                } catch {
+//
+//                                }
+//
+//                            }
+//                        }
+//                    }
+//                }
                 
             }
             
@@ -155,7 +191,7 @@ class InputPasteboardParser: NSObject {
             
             files = files.filter { path -> Bool in
                 if let size = fileSize(path.path) {
-                    return size <= 1500 * 1024 * 1024
+                    return size <= 2000 * 1024 * 1024
                 }
                 
                 return false
@@ -164,7 +200,7 @@ class InputPasteboardParser: NSObject {
             let afterSizeCheck = files.count
             
             if afterSizeCheck == 0 && previous != afterSizeCheck {
-                alert(for: mainWindow, info: L10n.appMaxFileSize)
+                alert(for: mainWindow, info: L10n.appMaxFileSize1)
                 return false
             }
             if let peer = chatInteraction.presentation.peer, let permissionText = permissionText(from: peer, for: .banSendMedia) {
@@ -175,12 +211,12 @@ class InputPasteboardParser: NSObject {
             }
             
             if files.count == 1, let editState = chatInteraction.presentation.interfaceState.editState, editState.canEditMedia {
-                _ = (Sender.generateMedia(for: MediaSenderContainer(path: files[0].path, isFile: false), account: chatInteraction.context.account) |> deliverOnMainQueue).start(next: { [weak chatInteraction] media, _ in
+                _ = (Sender.generateMedia(for: MediaSenderContainer(path: files[0].path, isFile: false), account: chatInteraction.context.account, isSecretRelated: chatInteraction.peerId.namespace == Namespaces.Peer.SecretChat) |> deliverOnMainQueue).start(next: { [weak chatInteraction] media, _ in
                     chatInteraction?.update({$0.updatedInterfaceState({$0.updatedEditState({$0?.withUpdatedMedia(media)})})})
                 })
                 return false
             } else if let image = image, let editState = chatInteraction.presentation.interfaceState.editState, editState.canEditMedia {
-                _ = (putToTemp(image: image) |> mapToSignal {Sender.generateMedia(for: MediaSenderContainer(path: $0, isFile: false), account: chatInteraction.context.account)} |> deliverOnMainQueue).start(next: { [weak chatInteraction] media, _ in
+                _ = (putToTemp(image: image) |> mapToSignal {Sender.generateMedia(for: MediaSenderContainer(path: $0, isFile: false), account: chatInteraction.context.account, isSecretRelated: chatInteraction.peerId.namespace == Namespaces.Peer.SecretChat) } |> deliverOnMainQueue).start(next: { [weak chatInteraction] media, _ in
                     chatInteraction?.update({$0.updatedInterfaceState({$0.updatedEditState({$0?.withUpdatedMedia(media)})})})
                 })
                 return false

@@ -28,55 +28,61 @@ class SelectManager : NSResponder {
         fatalError("init(coder:) has not been implemented")
     }
     
-    private var ranges:[(AnyHashable,WeakReference<TextView>, SelectContainer)] = []
+    private var ranges:Atomic<[(AnyHashable,WeakReference<TextView>, SelectContainer)]> = Atomic(value: [])
     
     func add(range:NSRange, textView: TextView, text: NSAttributedString, header: String?, stableId: AnyHashable) {
-        ranges.append((stableId, WeakReference(value: textView), SelectContainer(text: text, range: range, header: header)))
+        _ = ranges.modify { ranges in
+            var ranges = ranges
+            ranges.append((stableId, WeakReference(value: textView), SelectContainer(text: text, range: range, header: header)))
+            return ranges
+        }
     }
     
     func removeAll() {
-        for selection in ranges {
-            if let value = selection.1.value {
-                value.layout?.clearSelect()
-                value.canBeResponder = true
-                value.setNeedsDisplay()
+        _ = ranges.modify { ranges in
+            for selection in ranges {
+                if let value = selection.1.value {
+                    value.layout?.clearSelect()
+                    value.canBeResponder = true
+                    value.setNeedsDisplay()
+                }
             }
+            return []
         }
-        ranges.removeAll()
     }
     
     func remove(for id:Int64) {
         
     }
     var isEmpty:Bool {
-        return ranges.isEmpty
+        return ranges.with { $0.isEmpty }
     }
     
     
     var selectedText: NSAttributedString {
         let string:NSMutableAttributedString = NSMutableAttributedString()
-        
-        for i in stride(from: ranges.count - 1, to: -1, by: -1) {
-            let container = ranges[i].2
-            if let header = container.header, ranges.count > 1 {
-                _ = string.append(string: header + "\n", color: nil, font: .normal(.text))
-            }
-            
-            if container.range.location != NSNotFound {
-                if container.range.location != 0, ranges.count > 1 {
-                    _ = string.append(string: "...", color: nil, font: .normal(.text))
+        _ = ranges.with { ranges in
+            for i in stride(from: ranges.count - 1, to: -1, by: -1) {
+                let container = ranges[i].2
+                if let header = container.header, ranges.count > 1 {
+                    _ = string.append(string: header + "\n", color: nil, font: .normal(.text))
                 }
-                string.append(container.text.attributedSubstring(from: container.range))
-                if container.range.location + container.range.length != container.text.length, ranges.count > 1 {
-                    _ = string.append(string: "...", color: nil, font: .normal(.text))
+                
+                if container.range.location != NSNotFound {
+                    if container.range.location != 0, ranges.count > 1 {
+                        _ = string.append(string: "...", color: nil, font: .normal(.text))
+                    }
+                    string.append(container.text.attributedSubstring(from: container.range))
+                    if container.range.location + container.range.length != container.text.length, ranges.count > 1 {
+                        _ = string.append(string: "...", color: nil, font: .normal(.text))
+                    }
                 }
-            }
-            
-            if i != 0 {
-                _ = string.append(string: "\n\n", color: nil, font: .normal(.text))
+                
+                if i != 0 {
+                    _ = string.append(string: "\n\n", color: nil, font: .normal(.text))
+                }
             }
         }
-
         return string
     }
     
@@ -111,76 +117,92 @@ class SelectManager : NSResponder {
     }
     
     func selectNextChar() -> Bool {
-        if let last = ranges.last, let textView = last.1.value {
-            if last.2.range.max < last.2.text.length, let layout = textView.layout {
-                
-                var range = last.2.range
-                
-                switch layout.selectedRange.cursorAlignment {
-                case let .min(cursorAlignment), let .max(cursorAlignment):
-                    if range.min >= cursorAlignment {
-                        range.length += 1
-                    } else {
-                        range.location += 1
-                        if range.length > 1 {
-                            range.length -= 1
+        var result: Bool = false
+        _ = ranges.modify { ranges in
+            var ranges = ranges
+            if let last = ranges.last, let textView = last.1.value {
+                if last.2.range.max < last.2.text.length, let layout = textView.layout {
+                    
+                    var range = last.2.range
+                    
+                    switch layout.selectedRange.cursorAlignment {
+                    case let .min(cursorAlignment), let .max(cursorAlignment):
+                        if range.min >= cursorAlignment {
+                            range.length += 1
+                        } else {
+                            range.location += 1
+                            if range.length > 1 {
+                                range.length -= 1
+                            }
                         }
                     }
+                    let location = min(max(0, range.location), last.2.text.length)
+                    let length = max(min(range.length, last.2.text.length - location), 0)
+                    range = NSMakeRange(location, length)
+                    
+                    layout.selectedRange.range = range
+                    ranges[ranges.count - 1] = (last.0, last.1, SelectContainer(text: last.2.text, range: range, header: last.2.header))
+                    textView.needsDisplay = true
+                    result = true
+                    return ranges
                 }
-                let location = min(max(0, range.location), last.2.text.length)
-                let length = max(min(range.length, last.2.text.length - location), 0)
-                range = NSMakeRange(location, length)
-                
-                layout.selectedRange.range = range
-                ranges[ranges.count - 1] = (last.0, last.1, SelectContainer(text: last.2.text, range: range, header: last.2.header))
-                textView.needsDisplay = true
-                return true
             }
+            result = false
+            return ranges
         }
-        return false
+        return result
     }
     
     func selectPrevChar() -> Bool {
-        if let first = ranges.first, let textView = first.1.value {
-            if let layout = textView.layout {
-                
-                var range = first.2.range
-                
-                switch layout.selectedRange.cursorAlignment {
-                case let .min(cursorAlignment), let .max(cursorAlignment):
-                    if range.location >= cursorAlignment {
-                        if range.length > 1 {
-                            range.length -= 1
+        var result: Bool = false
+        _ = ranges.modify { ranges in
+            var ranges = ranges
+            if let first = ranges.first, let textView = first.1.value {
+                if let layout = textView.layout {
+                    
+                    var range = first.2.range
+                    
+                    switch layout.selectedRange.cursorAlignment {
+                    case let .min(cursorAlignment), let .max(cursorAlignment):
+                        if range.location >= cursorAlignment {
+                            if range.length > 1 {
+                                range.length -= 1
+                            } else {
+                                range.location -= 1
+                            }
                         } else {
-                            range.location -= 1
-                        }
-                    } else {
-                        if range.location > 0 {
-                            range.location -= 1
-                            range.length += 1
+                            if range.location > 0 {
+                                range.location -= 1
+                                range.length += 1
+                            }
                         }
                     }
+                    
+                    let location = min(max(0, range.location), first.2.text.length)
+                    let length = max(min(range.length, first.2.text.length - location), 0)
+                    range = NSMakeRange(location, length)
+                    layout.selectedRange.range = range
+                    ranges[0] = (first.0, first.1, SelectContainer(text: first.2.text, range: range, header: first.2.header))
+                    textView.needsDisplay = true
+                    result = true
+                    return ranges
                 }
-    
-                let location = min(max(0, range.location), first.2.text.length)
-                let length = max(min(range.length, first.2.text.length - location), 0)
-                range = NSMakeRange(location, length)
-                layout.selectedRange.range = range
-                ranges[0] = (first.0, first.1, SelectContainer(text: first.2.text, range: range, header: first.2.header))
-                textView.needsDisplay = true
-                return true
             }
+            result = false
+            return ranges
         }
-        return false
+        return result
     }
     
     func find(_ stableId:AnyHashable) -> NSRange? {
-        for range in ranges {
-            if range.0 == stableId {
-                return range.2.range
+        return ranges.with { ranges -> NSRange? in
+            for range in ranges {
+                if range.0 == stableId {
+                    return range.2.range
+                }
             }
+            return nil
         }
-        return nil
     }
     
     override func becomeFirstResponder() -> Bool {
@@ -275,18 +297,18 @@ class ChatSelectText : NSObject {
                     }
                 }
                 
-                if row < 0 || (!NSPointInRect(point, table.frame) || hasModals() || (!table.item(at: row).canMultiselectTextIn(event.locationInWindow) && chatInteraction.presentation.state != .selecting)) || !isCurrentTableView(window.contentView?.hitTest(event.locationInWindow)) {       self?.beginInnerLocation = NSZeroPoint
+                if row < 0 || (!NSPointInRect(point, table.frame) || hasModals(window) || (!table.item(at: row).canMultiselectTextIn(event.locationInWindow) && chatInteraction.presentation.state != .selecting)) || !isCurrentTableView(window.contentView?.hitTest(event.locationInWindow)) {       self?.beginInnerLocation = NSZeroPoint
                 } else {
                     self?.beginInnerLocation = documentPoint
                 }
                 
                 
                 if row != -1, let item = table.item(at: row) as? ChatRowItem, let view = item.view as? ChatRowView {
-                    if chatInteraction.presentation.state == .selecting || (theme.bubbled && !NSPointInRect(view.convert(window.mouseLocationOutsideOfEventStream, from: nil), view.bubbleFrame)) {
+                    if chatInteraction.presentation.state == .selecting || (theme.bubbled && !NSPointInRect(view.convert(event.locationInWindow, from: nil), view.bubbleFrame(item))) {
                         if self?.startMessageId == nil {
                             self?.startMessageId = item.message?.id
                         }
-                        self?.deselect = !view.isSelectInGroup(window.mouseLocationOutsideOfEventStream)
+                        self?.deselect = !view.isSelectInGroup(event.locationInWindow)
                     }
                 }
                 
@@ -306,7 +328,7 @@ class ChatSelectText : NSObject {
                 guard let documentView = table.documentView else {return}
                 
                 var cleanStartId: Bool = false
-                let documentPoint = documentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                let documentPoint = documentView.convert(event.locationInWindow, from: nil)
                 let row = table.row(at: documentPoint)
                  if chatInteraction.presentation.state != .selecting {
                     if let view = table.viewNecessary(at: row) as? ChatRowView, !view.canStartTextSelecting(event) {
@@ -314,20 +336,39 @@ class ChatSelectText : NSObject {
                     }
                     cleanStartId = true
                 }
+               
                 
-                let point = self?.table.documentView?.convert(window.mouseLocationOutsideOfEventStream, from: nil) ?? NSZeroPoint
+                let point = self?.table.documentView?.convert(event.locationInWindow, from: nil) ?? NSZeroPoint
                 if let index = self?.table.row(at: point), index > 0, let item = self?.table.item(at: index), let view = item.view as? ChatRowView {
                     
-                    if view.canDropSelection(in: window.mouseLocationOutsideOfEventStream) {
+                    if event.clickCount > 1, selectManager.isEmpty {
+                        var set: Bool = false
+                        inner: for view in view.selectableTextViews {
+                            if view == window.firstResponder {
+                                _ = window.makeFirstResponder(view)
+                                set = true
+                                break inner
+                            }
+                        }
+                        if !set {
+                            _ = window.makeFirstResponder(view.selectableTextViews.first)
+                        }
+                    }
+
+                    if chatInteraction.presentation.reportMode == nil {
+                        if view.canDropSelection(in: event.locationInWindow) {
+                            if let result = chatInteraction.presentation.selectionState?.selectedIds.isEmpty, result {
+                                self?.startMessageId = nil
+                                chatInteraction.update({$0.withoutSelectionState()})
+                            }
+                        }
+                    }
+                } else {
+                    if chatInteraction.presentation.reportMode == nil {
                         if let result = chatInteraction.presentation.selectionState?.selectedIds.isEmpty, result {
                             self?.startMessageId = nil
                             chatInteraction.update({$0.withoutSelectionState()})
                         }
-                    }
-                } else {
-                    if let result = chatInteraction.presentation.selectionState?.selectedIds.isEmpty, result {
-                        self?.startMessageId = nil
-                        chatInteraction.update({$0.withoutSelectionState()})
                     }
                 }
                 if cleanStartId {
@@ -357,6 +398,9 @@ class ChatSelectText : NSObject {
             if self.started {
                 self.started = !hasPopover(window) && self.beginInnerLocation != NSZeroPoint
             }
+            if event.clickCount > 1 {
+                self.started = false
+            }
             
            // NSLog("\(!NSPointInRect(event.locationInWindow, window.bounds))")
             
@@ -372,7 +416,7 @@ class ChatSelectText : NSObject {
                     return .invoked
                     
                 } else if chatInteraction.presentation.state == .selecting {
-                    self.runSelector(false, window: window, chatInteraction:chatInteraction)
+                    self.runSelector(false, window: window, chatInteraction: chatInteraction)
                     return .invokeNext
                 }
             }
@@ -388,7 +432,7 @@ class ChatSelectText : NSObject {
             return .rejected
         }, with: self, for: .pressure, priority: .medium)
         
-        window.set(handler: { () -> KeyHandlerResult in
+        window.set(handler: { _ -> KeyHandlerResult in
             
             return .rejected
         }, with: self, for: .A, priority: .medium, modifierFlags: [.command])
@@ -414,10 +458,10 @@ class ChatSelectText : NSObject {
         }
         
         let beginRow = table.row(at: beginInnerLocation)
-        if  let view = table.item(at: beginRow).view as? ChatRowView, selectingText, table._mouseInside() {
+        if  let view = table.item(at: beginRow).view as? ChatRowView, let item = view.item as? ChatRowItem, selectingText, table._mouseInside() {
             let rowPoint = view.convert(beginInnerLocation, from: table.documentView)
-            if (!NSPointInRect(rowPoint, view.bubbleFrame) && theme.bubbled) {
-                if startIndex != endIndex {
+            if (!NSPointInRect(rowPoint, view.bubbleFrame(item)) && theme.bubbled) {
+                if startIndex != endIndex || abs(beginInnerLocation.y - endInnerLocation.y) > 10 {
                     for i in max(0,startIndex) ... min(endIndex,table.count - 1)  {
                         let item = table.item(at: i) as? ChatRowItem
                         if let view = item?.view as? ChatRowView {
@@ -438,6 +482,29 @@ class ChatSelectText : NSObject {
             for i in startIndex ... endIndex  {
                 let view = table.viewNecessary(at: i) as? MultipleSelectable
                 if let views = view?.selectableTextViews {
+                    
+                    var start_j:Int? = nil
+                    var end_j:Int? = nil
+                    
+                    inner: for j in 0 ..< views.count {
+                        let selectableView = views[j]
+                        let viewRect = selectableView.convert(CGRect(origin: .zero, size: selectableView.frame.size), to: table.documentView)
+                        let rect = NSRect(x: viewRect.midX, y: min(beginInnerLocation.y, endInnerLocation.y), width: abs(endInnerLocation.x - beginInnerLocation.x), height: abs(endInnerLocation.y - beginInnerLocation.y))
+                        
+                        if rect.intersects(viewRect) {
+                            if start_j == nil {
+                                start_j = j
+                            } else {
+                                start_j = min(start_j!, j)
+                            }
+                            if end_j == nil {
+                                end_j = j
+                            } else {
+                                end_j = max(end_j!, j)
+                            }
+                        }
+                    }
+                    
                     for j in 0 ..< views.count {
                         let selectableView = views[j]
                         
@@ -451,6 +518,9 @@ class ChatSelectText : NSObject {
                             if i == startIndex && i == endIndex {
                                 
                             }
+                            
+                           
+                            
                             
                             if (i > startIndex && i < endIndex) {
                                 startPoint = NSMakePoint(0, 0);
@@ -476,6 +546,29 @@ class ChatSelectText : NSObject {
                                 } else {
                                     startPoint = beginViewLocation;
                                     endPoint = NSMakePoint(layout.layoutSize.width, .greatestFiniteMagnitude);
+                                }
+                            }
+                            
+                            if let start_j = start_j, let end_j = end_j, i == endIndex || i == startIndex {
+                                if j < start_j || j > end_j {
+                                    continue
+                                } else {
+                                    if end_j - start_j > 0 {
+                                        if beginInnerLocation.y > endInnerLocation.y {
+                                            if j <= start_j {
+                                                endPoint = NSMakePoint(layout.layoutSize.width, .greatestFiniteMagnitude);
+                                            } else {
+                                                startPoint = .zero
+                                            }
+                                        } else if beginInnerLocation.y < endInnerLocation.y {
+                                            if j > start_j {
+                                                endPoint = .zero
+                                            } else {
+                                                startPoint = NSMakePoint(layout.layoutSize.width, .greatestFiniteMagnitude);
+                                            }
+                                        }
+                                    }
+                                    
                                 }
                             }
                             

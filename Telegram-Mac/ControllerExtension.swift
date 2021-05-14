@@ -44,7 +44,9 @@ class TelegramGenericViewController<T>: GenericViewController<T> where T:NSView 
     }
 }
 
-class TelegramViewController: TelegramGenericViewController<NSView> {
+
+
+class TelegramViewController: TelegramGenericViewController<View> {
     
 }
 
@@ -64,6 +66,12 @@ class TableViewController: TelegramGenericViewController<TableView>, TableViewDe
         super.viewDidLoad()
         genericView.getBackgroundColor = {
            return theme.colors.listBackground
+        }
+    }
+    
+    override func scrollup(force: Bool = false) {
+        if isLoaded() {
+            self.genericView.scroll(to: .up(!force))
         }
     }
     
@@ -122,13 +130,14 @@ class EditableViewController<T>: TelegramGenericViewController<T> where T: NSVie
     
     func changeState() ->Void {
         
+        let new: ViewControllerState
         if case .Normal = state {
-            self.state = .Edit
+            new = .Edit
         } else {
-            self.state = .Normal
+            new = .Normal
         }
         
-        update(with:state)
+        update(with: new)
     }
     
     var doneString:String {
@@ -190,6 +199,7 @@ class EditableViewController<T>: TelegramGenericViewController<T> where T: NSVie
     }
 
     func update(with state:ViewControllerState) -> Void {
+        self.state = state
         updateEditStateTitles()
     }
     
@@ -220,6 +230,10 @@ final class Appearance : Equatable {
     init(language: TelegramLocalization, presentation: TelegramPresentationTheme) {
         self.language = language
         self.presentation = presentation
+    }
+    
+    var locale: Locale {
+        return Locale(identifier: appAppearance.language.languageCode)
     }
     
     var newAllocation: Appearance {

@@ -20,10 +20,13 @@ class ChatCallRowItem: ChatRowItem {
     
     let outgoing:Bool
     let failed: Bool
+    let isVideo: Bool
     private let requestSessionId = MetaDisposable()
     override func viewClass() -> AnyClass {
         return ChatCallRowView.self
     }
+    
+    private let callId: Int64?
     
     override init(_ initialSize: NSSize, _ chatInteraction: ChatInteraction, _ context: AccountContext, _ object: ChatHistoryEntry, _ downloadSettings: AutomaticMediaDownloadSettings, theme: TelegramPresentationTheme) {
         
@@ -31,9 +34,21 @@ class ChatCallRowItem: ChatRowItem {
         let action = message.media[0] as! TelegramMediaAction
         let isIncoming: Bool = message.isIncoming(context.account, object.renderType == .bubble)
         outgoing = !message.flags.contains(.Incoming)
-        headerLayout = TextViewLayout(.initialize(string: outgoing ? tr(L10n.chatCallOutgoing) : tr(L10n.chatCallIncoming), color: theme.chat.textColor(isIncoming, object.renderType == .bubble), font: .medium(.text)), maximumNumberOfLines: 1)
+        
+        let video: Bool
         switch action.action {
-        case let .phoneCall(_, reason, duration):
+        case let .phoneCall(callId, _, _, isVideo):
+            video = isVideo
+            self.callId = callId
+        default:
+            video = false
+            self.callId = nil
+        }
+        self.isVideo = video
+        
+        headerLayout = TextViewLayout(.initialize(string: outgoing ? (video ? L10n.chatVideoCallOutgoing : L10n.chatCallOutgoing) : (video ? L10n.chatVideoCallIncoming : L10n.chatCallIncoming), color: theme.chat.textColor(isIncoming, object.renderType == .bubble), font: .medium(.text)), maximumNumberOfLines: 1)
+        switch action.action {
+        case let .phoneCall(_, reason, duration, _):
             let attr = NSMutableAttributedString()
             
            
@@ -78,9 +93,65 @@ class ChatCallRowItem: ChatRowItem {
         if let peerId = message?.id.peerId {
             let context = self.context
             
-            requestSessionId.set((phoneCall(account: context.account, sharedContext: context.sharedContext, peerId: peerId) |> deliverOnMainQueue).start(next: { result in
+            requestSessionId.set((phoneCall(account: context.account, sharedContext: context.sharedContext, peerId: peerId, isVideo: isVideo) |> deliverOnMainQueue).start(next: { result in
                 applyUIPCallResult(context.sharedContext, result)
             }))
+        }
+    }
+    
+    override func menuItems(in location: NSPoint) -> Signal<[ContextMenuItem], NoError> {
+        
+        let context = self.context
+        let callId = self.callId ?? 0
+        let message = self.message!
+        return super.menuItems(in: location) |> map { items in
+            var items = items
+            
+
+            
+            var callId: CallId?
+            var isVideo: Bool = false
+            var logPath: String?
+            for media in message.media {
+                if let action = media as? TelegramMediaAction, case let .phoneCall(id, discardReason, _, isVideoValue) = action.action {
+                    isVideo = isVideoValue
+                    if discardReason != .busy && discardReason != .missed {
+                        if let logName = callLogNameForId(id: id, account: context.account) {
+                            let logsPath = callLogsPath(account: context.account)
+                            logPath = logsPath + "/" + logName
+                            let start = logName.index(logName.startIndex, offsetBy: "\(id)".count + 1)
+                            let end: String.Index
+                            if logName.hasSuffix(".log.json") {
+                                end = logName.index(logName.endIndex, offsetBy: -4 - 5)
+                            } else {
+                                end = logName.index(logName.endIndex, offsetBy: -4)
+                            }
+                            let accessHash = logName[start..<end]
+                            if let accessHash = Int64(accessHash) {
+                                callId = CallId(id: id, accessHash: accessHash)
+                            }
+                            
+                        }
+                    }
+                    break
+                }
+            }
+
+            if let callId = callId, let foundLog = logPath {
+                items.append(ContextSeparatorItem())
+
+                items.append(.init(L10n.callContextRate, handler: {
+                    showModal(with: CallRatingModalViewController(context.account, callId: callId, userInitiated: true, isVideo: isVideo), for: context.window)
+                }))
+                if FileManager.default.fileExists(atPath: foundLog), let size = fs(foundLog), size > 0 {
+                    items.append(.init(L10n.shareCallLogs, handler: {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: foundLog)])
+                    }))
+                }
+               
+            }
+           
+            return items
         }
     }
     
@@ -99,6 +170,8 @@ private class ChatCallRowView : ChatRowView {
     
     required init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        
+        fallbackControl.animates = false
         
         addSubview(fallbackControl)
         addSubview(imageView)
@@ -126,7 +199,7 @@ private class ChatCallRowView : ChatRowView {
         if let item = item as? ChatCallRowItem {
             
             fallbackControl.set(image: theme.chat.chatCallFallbackIcon(item), for: .Normal)
-            fallbackControl.sizeToFit()
+            _ = fallbackControl.sizeToFit()
             
             imageView.image = theme.chat.chatCallIcon(item)
             imageView.sizeToFit()

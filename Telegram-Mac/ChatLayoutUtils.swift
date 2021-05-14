@@ -63,6 +63,21 @@ class ChatLayoutUtils: NSObject {
                 size = NSMakeSize(250, 250)
             } else if file.isVideo || (file.isAnimated && !file.mimeType.lowercased().hasSuffix("gif")) {
 
+                var contentSize = contentSize
+                
+                
+                if contentSize.width == 0 || contentSize.height == 0 {
+                    contentSize = NSMakeSize(300, 300)
+                }
+                
+                let aspectRatio = contentSize.width / contentSize.height
+                let addition = max(300 - contentSize.width, 300 - contentSize.height)
+                
+                if addition > 0 {
+                    contentSize.width += addition * aspectRatio
+                    contentSize.height += addition
+                }
+                
                 if file.isVideo && contentSize.width > contentSize.height {
                     size = contentSize.aspectFitted(NSMakeSize(min(420, width), contentSize.height))
                 } else {
@@ -71,6 +86,10 @@ class ChatLayoutUtils: NSObject {
                       //  size.width = max(maxSize.width, size.width)
                     }
                 }
+                
+               
+                
+                
                 if hasText {
                     size.width = max(maxSize.width, size.width)
                 }
@@ -98,12 +117,14 @@ class ChatLayoutUtils: NSObject {
         return size
     }
     
-    static func contentNode(for media:Media) -> ChatMediaContentView.Type {
+    static func contentNode(for media:Media, packs: Bool = false) -> ChatMediaContentView.Type {
         
         if media is TelegramMediaImage {
             return ChatInteractiveContentView.self
         } else if let file = media as? TelegramMediaFile {
-            if file.isAnimatedSticker {
+            if file.mimeType == "image/webp" && !packs {
+                return MediaAnimatedStickerView.self
+            } else if file.isAnimatedSticker {
                 return MediaAnimatedStickerView.self
             } else if file.isStaticSticker {
                 return ChatStickerContentView.self
@@ -122,8 +143,12 @@ class ChatLayoutUtils: NSObject {
             }
         } else if media is TelegramMediaMap {
             return ChatMapContentView.self
-        } else if media is TelegramMediaDice {
-            return ChatDiceContentView.self
+        } else if let media = media as? TelegramMediaDice {
+            if media.emoji == slotsEmoji {
+                return SlotsMediaContentView.self
+            } else {
+                return ChatDiceContentView.self
+            }
         } else if let media = media as? TelegramMediaGame {
             if let file = media.file {
                 return contentNode(for: file)

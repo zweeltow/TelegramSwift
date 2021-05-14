@@ -98,7 +98,6 @@ private final class LocationMapView : View {
         mapView.mapType = .standard
         mapView.isZoomEnabled = true
         mapView.isScrollEnabled = true
-        mapView.showsUserLocation = true
         mapView.showsZoomControls = true
         mapView.wantsLayer = true
         header.addSubview(headerTextView)
@@ -169,7 +168,6 @@ private final class LocationMapView : View {
             locationPinView.change(opacity: loading ? 0 : 1, animated: animated)
             locationPinView.updateState(pickState, animated: animated)
             expandButton.set(text: L10n.locationSendShowNearby, for: .Normal)
-            //NSMakeRect(0, frame.height - 50 - expandContainer.frame.height, frame.width, 50)
             tableView.change(size: NSMakeSize(frame.width, 60), animated: animated, timingFunction: CAMediaTimingFunctionName.spring)
             tableView.change(pos: NSMakePoint(0, frame.height - 60 - (hasExpand ? expandContainer.frame.height : 0)), animated: animated, duration: duration, timingFunction: timingFunction)
             mapY = header.frame.height
@@ -189,7 +187,6 @@ private final class LocationMapView : View {
         
         
         mapView._change(pos: NSMakePoint(0, mapY), animated: animated, duration: duration, timingFunction: timingFunction)
-        //pinPoint.midY - locationPinView.frame.height
         let pinPoint = mapView.focus(NSMakeSize(locationPinView.frame.width, 4))
         locationPinView.change(pos: NSMakePoint(pinPoint.minX, pinPoint.midY - locationPinView.frame.height), animated: animated, duration: 0.2, timingFunction: CAMediaTimingFunctionName.linear)
 
@@ -330,7 +327,7 @@ private enum MapItemEntry : TableItemListNodeEntry {
                 arguments.searchVenues(state.request)
             }, { state in
                 arguments.searchVenues(state.request)
-            }), inset: NSEdgeInsets(left:10,right:10, top: 10, bottom: 10))
+            }), inset: NSEdgeInsets(left: 10,right: 10, top: 10, bottom: 10))
         case let .currentLocation(_, state):
             return LocationSendCurrentItem(initialSize, stableId: stableId, state: state, action: {
                 arguments.sendCurrent()
@@ -419,7 +416,7 @@ private class MapDelegate : NSObject, MKMapViewDelegate {
         guard !isPinRaised else {return}
         focusUserLocation(mapView)
     }
-    
+        
     func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
         willChangeRegion()
 
@@ -431,11 +428,14 @@ private class MapDelegate : NSObject, MKMapViewDelegate {
     
     func mapView(_ mapView: MKMapView, didFailToLocateUserWithError error: Error) {
         if "\(error)".contains("Code=1") {
-            self.location.set(.single(nil))
-            isPinRaised = true
-            didChangeRegion()
-            mapView.showsUserLocation = false
+            cancelRequestLocation()
         }
+    }
+
+    func cancelRequestLocation() {
+        self.location.set(.single(nil))
+        isPinRaised = true
+        didChangeRegion()
     }
     
     
@@ -462,6 +462,7 @@ class LocationModalController: ModalViewController {
     private let delegate: MapDelegate = MapDelegate()
     private let disposable = MetaDisposable()
     private let sendDisposable = MetaDisposable()
+    private let requestDisposable = MetaDisposable()
     private let statePromise:Promise<LocationViewState> = Promise()
     init(_ chatInteraction: ChatInteraction) {
         self.chatInteraction = chatInteraction
@@ -500,6 +501,10 @@ class LocationModalController: ModalViewController {
         }, with: self, for: .leftMouseDragged, priority: .modal)
     }
     
+    override func close(animationType: ModalAnimationCloseBehaviour = .common) {
+        super.close(animationType: animationType)
+    }
+
     private func sendLocation(_ media: TelegramMediaMap? = nil) {
         sendDisposable.set((statePromise.get() |> deliverOnMainQueue).start(next: { [weak self] state in
             switch state {
@@ -528,7 +533,7 @@ class LocationModalController: ModalViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        
+                
         genericView.mapView.delegate = delegate
         genericView.dismiss.set(handler: { [weak self] _ in
             self?.close()
@@ -583,11 +588,11 @@ class LocationModalController: ModalViewController {
                         return first |> then(requestChatContextResults(account: context.account, botId: botId, peerId: peerId, query: query, location: .single((location.coordinate.latitude, location.coordinate.longitude)), offset: "")
                             |> `catch` { _ in return .complete() }
                             |> deliverOnPrepareQueue |> map { result in
-                                var value = result
+                                var value = result?.results
                                 if let result = result {
-                                    cachedData[query] = result
+                                    cachedData[query] = result.results
                                 }
-                                value = previousResult.modify {_ in result}
+                                value = previousResult.modify { _ in result?.results }
                                 
                                 return (value, location.location, false, !query.isEmpty)
                             })
@@ -638,7 +643,7 @@ class LocationModalController: ModalViewController {
             return .single(state)
         } |> distinctUntilChanged
         
-        let transition:Signal<(TableUpdateTransition, Bool, LocationViewState, Bool), NoError> = combineLatest(signal |> deliverOnPrepareQueue, appearanceSignal |> deliverOnPrepareQueue, stateModified |> deliverOnPrepareQueue) |> map { data, appearance, state in
+        let transition:Signal<(TableUpdateTransition, Bool, LocationViewState, Bool), NoError> = combineLatest(queue: prepareQueue, signal, appearanceSignal, stateModified) |> map { data, appearance, state in
             let results:[ChatContextResult] = data.0?.results ?? []
             let entries = mapEntries(result: results, loading: data.2, location: data.1, state: state).map{AppearanceWrapperEntry(entry: $0, appearance: appearance)}
             return (prepareTransition(left: previous.swap(entries), right: entries, initialSize: initialSize.modify{$0}, arguments: arguments), data.2, state, !results.isEmpty || data.3)
@@ -662,12 +667,19 @@ class LocationModalController: ModalViewController {
             })
             self.readyOnce()
         }))
-        
+
+        let request = requestUserLocation() |> deliverOnMainQueue
+        requestDisposable.set(request.start(next: { [weak self] result in
+            self?.genericView.mapView.showsUserLocation = true
+        }, error: { [weak self] error in
+            self?.delegate.cancelRequestLocation()
+        }))
     }
     
     deinit {
         disposable.dispose()
         sendDisposable.dispose()
+        requestDisposable.dispose()
     }
     
     private var genericView: LocationMapView {

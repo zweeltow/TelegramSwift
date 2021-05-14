@@ -44,20 +44,20 @@ class ContextListRowItem: TableRowItem {
         var representation: TelegramMediaImageRepresentation?
         var iconText:NSAttributedString? = nil
         switch result {
-        case let .externalReference(_, _, _, title, description, url, content, thumbnail, _):
-            if let thumbnail = thumbnail {
-                representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(NSMakeSize(50, 50)), resource: thumbnail.resource)
+        case let .externalReference(values):
+            if let thumbnail = values.thumbnail {
+                representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(NSMakeSize(50, 50)), resource: thumbnail.resource, progressiveSizes: [], immediateThumbnailData: nil)
             }
-            if let content = content {
+            if let content = values.content {
                 if content.mimeType.hasPrefix("audio") {
                     vClass = ContextListAudioView.self
-                    audioWrapper = APSingleWrapper(resource: content.resource, name: title, performer: description, id: result.maybeId)
+                    audioWrapper = APSingleWrapper(resource: content.resource, name: values.title, performer: values.description, duration: content.duration, id: result.maybeId)
                 } else if content.mimeType == "video/mp4" {
                     vClass = ContextListGIFView.self
                 }
             }
             var selectedUrl: String?
-            if let url = url {
+            if let url = values.url {
                 selectedUrl = url
             }
             if let selectedUrl = selectedUrl, let parsedUrl = URL(string: selectedUrl) {
@@ -65,18 +65,18 @@ class ContextListRowItem: TableRowItem {
                     iconText = NSAttributedString.initialize(string: host.substring(to: host.index(after: host.startIndex)).uppercased(), color: .white, font: .medium(25.0))
                 }
             }
-        case let .internalReference(_, _, _, title, description, image, file, _):
+        case let .internalReference(values):
             if let file = file {
                 self.file = file
                 fileResource = file.resource
                 if file.isMusic || file.isVoice {
                     vClass = ContextListAudioView.self
-                    audioWrapper = APSingleWrapper(resource: fileResource!, name: title, performer: description, id:result.maybeId)
+                    audioWrapper = APSingleWrapper(resource: fileResource!, name: values.title, performer: values.description, duration: file.duration, id: result.maybeId)
                 } else if file.isVideo && file.isAnimated {
                     vClass = ContextListGIFView.self
                 }
             }
-            if let image = image {
+            if let image = values.image {
                 representation = smallestImageRepresentation(image.representations)
             } else if let file = file {
                 representation = smallestImageRepresentation(file.previewRepresentations)
@@ -273,8 +273,8 @@ class ContextListGIFView : ContextListRowView {
         let updated = self.item != item
         super.set(item: item, animated: animated)
         
-        if let item = item as? ContextListRowItem, updated, let resource = item.fileResource {
-            player.update(with: MediaResourceReference.standalone(resource: resource), size: NSMakeSize(50,50), viewSize: NSMakeSize(50,50), file: item.file, context: item.context, table: item.table, iconSignal: item.iconSignal)
+        if let item = item as? ContextListRowItem, updated, let file = item.file {
+            player.update(with: FileMediaReference.standalone(media: file), size: NSMakeSize(50,50), viewSize: NSMakeSize(50,50), context: item.context, table: item.table, iconSignal: item.iconSignal)
             player.needsLayout = true
         }
     }
@@ -305,10 +305,9 @@ class ContextListAudioView : ContextListRowView, APDelegate {
                 break
             case .Local, .Remote:
                 if let wrapper = item.audioWrapper {
-                    if let controller = globalAudio, let song = controller.currentSong, song.entry.isEqual(to: wrapper) {
-                        controller.playOrPause()
+                    if let controller = globalAudio, controller.playOrPause(wrapper) {
                     } else {
-                        let controller = APSingleResourceController(account: item.context.account, wrapper: wrapper, streamable: false)
+                        let controller = APSingleResourceController(context: item.context, wrapper: wrapper, streamable: false)
                         controller.add(listener: self)
                         item.chatInteraction.inlineAudioPlayer(controller)
                         controller.start()
@@ -321,24 +320,24 @@ class ContextListAudioView : ContextListRowView, APDelegate {
         }
     }
     
-    func songDidChanged(song: APSongItem, for controller: APController) {
+    func songDidChanged(song: APSongItem, for controller: APController, animated: Bool) {
         checkState()
     }
-    func songDidChangedState(song: APSongItem, for controller: APController) {
+    func songDidChangedState(song: APSongItem, for controller: APController, animated: Bool) {
         checkState()
     }
     
-    func songDidStartPlaying(song:APSongItem, for controller:APController) {
+    func songDidStartPlaying(song:APSongItem, for controller:APController, animated: Bool) {
         
     }
-    func songDidStopPlaying(song:APSongItem, for controller:APController) {
+    func songDidStopPlaying(song:APSongItem, for controller:APController, animated: Bool) {
         
     }
-    func playerDidChangedTimebase(song:APSongItem, for controller:APController) {
+    func playerDidChangedTimebase(song:APSongItem, for controller:APController, animated: Bool) {
         
     }
     
-    func audioDidCompleteQueue(for controller:APController) {
+    func audioDidCompleteQueue(for controller:APController, animated: Bool) {
         
     }
     

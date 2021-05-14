@@ -147,7 +147,7 @@ class SelectCallbackObject : ShareObject {
         return false
     }
     
-    override func perform(to peerIds:[PeerId], comment: String? = nil) -> Signal<Never, String> {
+    override func perform(to peerIds:[PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
         return callback(peerIds) |> mapError { _ in return String() }
     }
     override func limitReached() {
@@ -163,6 +163,9 @@ class SelectCallbackObject : ShareObject {
         return true
     }
     override func possibilityPerformTo(_ peer: Peer) -> Bool {
+        if peer is TelegramSecretChat {
+            return false
+        }
         return true
     }
     
@@ -201,7 +204,8 @@ private final class ChatListPresetArguments {
     let openInfo:(PeerId)->Void
     let showAllInclude: ()->Void
     let showAllExclude: ()->Void
-    init(context: AccountContext, toggleOption:@escaping(ChatListFilterPeerCategories)->Void, addInclude: @escaping()->Void, addExclude: @escaping()->Void, removeIncluded: @escaping(PeerId)->Void, removeExcluded: @escaping(PeerId)->Void, openInfo: @escaping(PeerId)->Void, toggleExcludeMuted:@escaping(Bool)->Void, toggleExcludeRead: @escaping(Bool)->Void, showAllInclude:@escaping()->Void, showAllExclude:@escaping()->Void) {
+    let updateIcon:(FolderIcon)->Void
+    init(context: AccountContext, toggleOption:@escaping(ChatListFilterPeerCategories)->Void, addInclude: @escaping()->Void, addExclude: @escaping()->Void, removeIncluded: @escaping(PeerId)->Void, removeExcluded: @escaping(PeerId)->Void, openInfo: @escaping(PeerId)->Void, toggleExcludeMuted:@escaping(Bool)->Void, toggleExcludeRead: @escaping(Bool)->Void, showAllInclude:@escaping()->Void, showAllExclude:@escaping()->Void, updateIcon: @escaping(FolderIcon)->Void) {
         self.context = context
         self.toggleOption = toggleOption
         self.toggleExcludeMuted = toggleExcludeMuted
@@ -213,6 +217,7 @@ private final class ChatListPresetArguments {
         self.openInfo = openInfo
         self.showAllInclude = showAllInclude
         self.showAllExclude = showAllExclude
+        self.updateIcon = updateIcon
     }
 }
 
@@ -284,7 +289,7 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
     
     
     if state.isNew {
-        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_header, equatable: nil, item: { initialSize, stableId in
+        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_header, equatable: nil, comparable: nil, item: { initialSize, stableId in
             let attributedString = NSMutableAttributedString()
             return ChatListFiltersHeaderItem(initialSize, context: arguments.context, stableId: stableId, sticker: LocalAnimatedSticker.new_folder, text: attributedString)
         }))
@@ -296,7 +301,10 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
     entries.append(.desc(sectionId: sectionId, index: index, text: .plain(L10n.chatListFilterNameHeader), data: .init(color: theme.colors.listGrayText, detectBold: true, viewType: .textTopItem)))
     index += 1
     
-    entries.append(.input(sectionId: sectionId, index: index, value: .string(state.filter.title), error: nil, identifier: _id_name_input, mode: .plain, data: .init(viewType: .singleItem), placeholder: nil, inputPlaceholder: L10n.chatListFilterNamePlaceholder, filter: { $0 }, limit: 12))
+    
+    entries.append(.input(sectionId: sectionId, index: index, value: .string(state.filter.title), error: nil, identifier: _id_name_input, mode: .plain, data: .init(viewType: .singleItem, rightItem: InputDataRightItem.action(FolderIcon(state.filter).icon(for: .settings), .custom{ item, control in
+        showPopover(for: control, with: ChatListFilterFolderIconController(arguments.context, select: arguments.updateIcon), edge: .minX, inset: NSMakePoint(0,-45))
+    })), placeholder: nil, inputPlaceholder: L10n.chatListFilterNamePlaceholder, filter: { $0 }, limit: 12))
     index += 1
    
     entries.append(.sectionId(sectionId, type: .normal))
@@ -308,7 +316,7 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
     let hasAddInclude = state.filter.data.includePeers.peers.count < maximumPeers || state.filter.data.categories != .all
     
     if hasAddInclude  {
-        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_add_include, equatable: InputDataEquatable(state), item: { initialSize, stableId in
+        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_add_include, equatable: InputDataEquatable(state), comparable: nil, item: { initialSize, stableId in
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.chatListFilterIncludeAddChat, nameStyle: blueActionButton, type: .none, viewType: includePeers.isEmpty ? .singleItem : .firstItem, action: arguments.addInclude, thumb: GeneralThumbAdditional(thumb: theme.icons.chat_filter_add, textInset: 46, thumbInset: 4))
         }))
         index += 1
@@ -334,7 +342,7 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
         }
         
         if i > 10, !state.showAllInclude {
-            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_include, equatable: InputDataEquatable(includePeers.count), item: { initialSize, stableId in
+            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_include, equatable: InputDataEquatable(includePeers.count), comparable: nil, item: { initialSize, stableId in
                 return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.chatListFilterShowMoreCountable(includePeers.count - i), nameStyle: blueActionButton, type: .none, viewType: .lastItem, action: arguments.showAllInclude, thumb: GeneralThumbAdditional(thumb: theme.icons.chatSearchUp, textInset: 52, thumbInset: 4))
             }))
             index += 1
@@ -346,13 +354,13 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
                 viewType = .innerItem
             }
             
-            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_include(peer.id), equatable: InputDataEquatable(E(viewType: viewType, peer: PeerEquatable(peer))), item: { initialSize, stableId in
+            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_include(peer.id), equatable: InputDataEquatable(E(viewType: viewType, peer: PeerEquatable(peer))), comparable: nil, item: { initialSize, stableId in
                 return ShortPeerRowItem(initialSize, peer: peer, account: arguments.context.account, stableId: stableId, height: 44, photoSize: NSMakeSize(30, 30), inset: NSEdgeInsets(left: 30, right: 30), viewType: viewType, action: {
                     arguments.openInfo(peer.id)
                 }, contextMenuItems: {
-                    return [ContextMenuItem(L10n.chatListFilterIncludeRemoveChat, handler: {
+                    return .single([ContextMenuItem(L10n.chatListFilterIncludeRemoveChat, handler: {
                         arguments.removeIncluded(peer.id)
-                    })]
+                    })])
                 })
             }))
             index += 1
@@ -365,7 +373,7 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
             let b: Int
         }
         
-        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_include, equatable: InputDataEquatable(T(a: state.showAllInclude, b: includePeers.count)), item: { initialSize, stableId in
+        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_include, equatable: InputDataEquatable(T(a: state.showAllInclude, b: includePeers.count)), comparable: nil, item: { initialSize, stableId in
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.chatListFilterHideCountable(includePeers.count - 11), nameStyle: blueActionButton, type: .none, viewType: .lastItem, action: arguments.showAllInclude, thumb: GeneralThumbAdditional(thumb: theme.icons.chatSearchDown, textInset: 52, thumbInset: 4))
         }))
         index += 1
@@ -386,7 +394,7 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
 
     
     if hasAddExclude {
-        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_add_exclude, equatable: InputDataEquatable(state), item: { initialSize, stableId in
+        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_add_exclude, equatable: InputDataEquatable(state), comparable: nil, item: { initialSize, stableId in
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.chatListFilterExcludeAddChat, nameStyle: blueActionButton, type: .none, viewType: excludePeers.isEmpty ? .singleItem : .firstItem, action: arguments.addExclude, thumb: GeneralThumbAdditional(thumb: theme.icons.chat_filter_add, textInset: 46, thumbInset: 2))
         }))
         index += 1
@@ -410,7 +418,7 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
             let peer: PeerEquatable
         }
         if i > 10, !state.showAllExclude {
-            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_exclude, equatable: InputDataEquatable(excludePeers.count), item: { initialSize, stableId in
+            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_exclude, equatable: InputDataEquatable(excludePeers.count), comparable: nil, item: { initialSize, stableId in
                 return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.chatListFilterShowMoreCountable(excludePeers.count - i), nameStyle: blueActionButton, type: .none, viewType: .lastItem, action: arguments.showAllExclude, thumb: GeneralThumbAdditional(thumb: theme.icons.chatSearchUp, textInset: 52, thumbInset: 4))
             }))
             index += 1
@@ -422,13 +430,13 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
                 viewType = .innerItem
             }
             
-            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_exclude(peer.id), equatable: InputDataEquatable(E(viewType: viewType, peer: PeerEquatable(peer))), item: { initialSize, stableId in
+            entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_exclude(peer.id), equatable: InputDataEquatable(E(viewType: viewType, peer: PeerEquatable(peer))), comparable: nil, item: { initialSize, stableId in
                 return ShortPeerRowItem(initialSize, peer: peer, account: arguments.context.account, stableId: stableId, height: 44, photoSize: NSMakeSize(30, 30), inset: NSEdgeInsets(left: 30, right: 30), viewType: viewType, action: {
                     arguments.openInfo(peer.id)
                 }, contextMenuItems: {
-                    return [ContextMenuItem.init(L10n.chatListFilterExcludeRemoveChat, handler: {
+                    return .single([ContextMenuItem.init(L10n.chatListFilterExcludeRemoveChat, handler: {
                         arguments.removeExcluded(peer.id)
-                    })]
+                    })])
                 })
             }))
             index += 1
@@ -443,7 +451,7 @@ private func chatListFilterEntries(state: ChatListFiltersListState, includePeers
             let b: Int
         }
         
-        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_exclude, equatable: InputDataEquatable(T(a: state.showAllExclude, b: excludePeers.count)), item: { initialSize, stableId in
+        entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_show_all_exclude, equatable: InputDataEquatable(T(a: state.showAllExclude, b: excludePeers.count)), comparable: nil, item: { initialSize, stableId in
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.chatListFilterHideCountable(excludePeers.count - 11), nameStyle: blueActionButton, type: .none, viewType: .lastItem, action: arguments.showAllExclude, thumb: GeneralThumbAdditional(thumb: theme.icons.chatSearchDown, textInset: 52, thumbInset: 4))
         }))
         index += 1
@@ -513,7 +521,7 @@ func ChatListFilterController(context: AccountContext, filter: ChatListFilter, i
                 var state = state
                 
                 let categories = peerIds.filter {
-                    $0.namespace == ChatListFilterPeerCategories.Namespace
+                    $0.namespace._internalGetInt32Value() == ChatListFilterPeerCategories.Namespace
                 }
                 let peerIds = Set(peerIds).subtracting(categories)
                 
@@ -521,7 +529,7 @@ func ChatListFilterController(context: AccountContext, filter: ChatListFilter, i
                     var filter = filter
                     filter.data.includePeers.setPeers(Array(peerIds.uniqueElements.prefix(maximumPeers)))
                     var updatedCats: ChatListFilterPeerCategories = []
-                    let cats = categories.map { ChatListFilterPeerCategories(rawValue: $0.id) }
+                    let cats = categories.map { ChatListFilterPeerCategories(rawValue: $0.id._internalGetInt32Value()) }
                     for cat in cats {
                         updatedCats.insert(cat)
                     }
@@ -545,18 +553,18 @@ func ChatListFilterController(context: AccountContext, filter: ChatListFilter, i
                     var filter = filter
                     
                     let categories = peerIds.filter {
-                        $0.namespace == ChatListFilterPeerCategories.Namespace
+                        $0.namespace._internalGetInt32Value() == ChatListFilterPeerCategories.Namespace
                     }
                     let peerIds = Set(peerIds).subtracting(categories)
                     filter.data.excludePeers = Array(peerIds.uniqueElements.prefix(maximumPeers))
                     for cat in categories {
-                        if ChatListFilterPeerCategories(rawValue: cat.id) == .excludeMuted {
+                        if ChatListFilterPeerCategories(rawValue: cat.id._internalGetInt32Value()) == .excludeMuted {
                             filter.data.excludeMuted = true
                         }
-                        if ChatListFilterPeerCategories(rawValue: cat.id) == .excludeRead {
+                        if ChatListFilterPeerCategories(rawValue: cat.id._internalGetInt32Value()) == .excludeRead {
                             filter.data.excludeRead = true
                         }
-                        if ChatListFilterPeerCategories(rawValue: cat.id) == .excludeArchived {
+                        if ChatListFilterPeerCategories(rawValue: cat.id._internalGetInt32Value()) == .excludeArchived {
                             filter.data.excludeArchived = true
                         }
                     }
@@ -576,8 +584,8 @@ func ChatListFilterController(context: AccountContext, filter: ChatListFilter, i
                 var peers = filter.data.includePeers.peers
                 peers.removeAll(where: { $0 == peerId })
                 filter.data.includePeers.setPeers(peers)
-                if peerId.namespace == ChatListFilterPeerCategories.Namespace  {
-                    filter.data.categories.remove(ChatListFilterPeerCategories(rawValue: peerId.id))
+                if peerId.namespace._internalGetInt32Value() == ChatListFilterPeerCategories.Namespace  {
+                    filter.data.categories.remove(ChatListFilterPeerCategories(rawValue: peerId.id._internalGetInt32Value()))
                 }
                 return filter
             }
@@ -592,14 +600,14 @@ func ChatListFilterController(context: AccountContext, filter: ChatListFilter, i
                 var peers = filter.data.excludePeers
                 peers.removeAll(where: { $0 == peerId })
                 filter.data.excludePeers = peers
-                if peerId.namespace == ChatListFilterPeerCategories.Namespace  {
-                    if ChatListFilterPeerCategories(rawValue: peerId.id) == .excludeMuted {
+                if peerId.namespace._internalGetInt32Value() == ChatListFilterPeerCategories.Namespace  {
+                    if ChatListFilterPeerCategories(rawValue: peerId.id._internalGetInt32Value()) == .excludeMuted {
                         filter.data.excludeMuted = false
                     }
-                    if ChatListFilterPeerCategories(rawValue: peerId.id) == .excludeRead {
+                    if ChatListFilterPeerCategories(rawValue: peerId.id._internalGetInt32Value()) == .excludeRead {
                         filter.data.excludeRead = false
                     }
-                    if ChatListFilterPeerCategories(rawValue: peerId.id) == .excludeArchived {
+                    if ChatListFilterPeerCategories(rawValue: peerId.id._internalGetInt32Value()) == .excludeArchived {
                         filter.data.excludeArchived = false
                     }
                 }
@@ -642,6 +650,16 @@ func ChatListFilterController(context: AccountContext, filter: ChatListFilter, i
         updateState { state in
             var state = state
             state.showAllExclude = !state.showAllExclude
+            return state
+        }
+    }, updateIcon: { icon in
+        updateState { state in
+            var state = state
+            state.withUpdatedFilter { filter in
+                var filter = filter
+                filter.emoticon = icon.emoticon.emoji
+                return filter
+            }
             return state
         }
     })
@@ -719,6 +737,7 @@ func ChatListFilterController(context: AccountContext, filter: ChatListFilter, i
                 updateState { state in
                     var state = state
                     state.filter.title = L10n.chatListFilterTilteDefaultUnmuted
+                  //  state.filter.emoticon = 
                     return state
                 }
             case .unread:

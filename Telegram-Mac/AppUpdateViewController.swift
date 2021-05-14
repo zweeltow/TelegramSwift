@@ -86,6 +86,8 @@ private var driver:SUBasicUpdateDriver?
 private let host = SUHost(bundle: Bundle.main)
 
 func updateApplication(sharedContext: SharedAccountContext) {
+
+    
     let state = stateValue.with {$0.loadingState}
     switch state {
     case let .readyToInstall(item):
@@ -93,6 +95,7 @@ func updateApplication(sharedContext: SharedAccountContext) {
         text += "\n\n"
         
         text += item.updateText
+        
         
         _ = (sharedContext.activeAccountsWithInfo |> take(1) |> mapToSignal { _, accounts -> Signal<Never, NoError> in
             return combineLatest(accounts.map { addAppUpdateText($0.account.postbox, applyText: text) }) |> ignoreValues
@@ -215,8 +218,8 @@ private func appUpdateEntries(state: AppUpdateState) -> [InputDataEntry] {
         sectionId += 1
     
         let text = "**" + item.versionTitle + "**" + "\n" + item.updateText
-        entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: InputDataIdentifier(item.fileURL.path), equatable: nil, item: { initialSize, stableId in
-            return GeneralTextRowItem(initialSize, stableId: stableId, text: text, textColor: theme.colors.grayText, fontSize: 13, isTextSelectable: true, viewType: .textTopItem)
+        entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: InputDataIdentifier(item.fileURL.path), equatable: nil, comparable: nil, item: { initialSize, stableId in
+            return GeneralTextRowItem(initialSize, stableId: stableId, text: text, textColor: theme.colors.listGrayText, fontSize: 13, isTextSelectable: true, viewType: .textTopItem)
         }))
         index += 1
     }
@@ -587,7 +590,13 @@ private func resetUpdater() {
 private var updaterSource: UpdaterSource? = nil
 
 func updater_resetWithUpdaterSource(_ source: UpdaterSource, force: Bool = true) {
-    
+    let state = stateValue.with { $0 }
+    switch state.loadingState {
+    case .readyToInstall:
+        return
+    default:
+        break
+    }
     if updaterSource != source {
         updaterSource = source
         switch source {

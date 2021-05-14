@@ -12,8 +12,17 @@ import Postbox
 import TelegramCore
 import SyncCore
 import TGUIKit
-//import WalletCore
 import SyncCore
+
+protocol ChatLocationContextHolder: class {
+}
+
+
+
+enum ChatLocation: Equatable {
+    case peer(PeerId)
+    case replyThread(ChatReplyThreadMessage)
+}
 
 
 
@@ -25,152 +34,6 @@ struct TemporaryPasswordContainer {
         return date + 15 * 60 > Date().timeIntervalSince1970
     }
 }
-//
-//private final class TonInstanceData {
-//    var config: String?
-//    var blockchainName: String?
-//    var instance: TonInstance?
-//}
-//
-//private final class TonNetworkProxyImpl: TonNetworkProxy {
-//    private let network: Network
-//
-//    init(network: Network) {
-//        self.network = network
-//    }
-//
-//    func request(data: Data, timeout timeoutValue: Double, completion: @escaping (TonNetworkProxyResult) -> Void) -> Disposable {
-//        return (walletProxyRequest(network: self.network, data: data)
-//            |> timeout(timeoutValue, queue: .concurrentDefaultQueue(), alternate: .fail(.generic(500, "Local Timeout")))).start(next: { data in
-//                completion(.reponse(data))
-//            }, error: { error in
-//                switch error {
-//                case let .generic(_, text):
-//                    completion(.error(text))
-//                }
-//            })
-//    }
-//}
-//
-//final class WalletStorageInterfaceImpl: WalletStorageInterface {
-//    private let postbox: Postbox
-//
-//    init(postbox: Postbox) {
-//        self.postbox = postbox
-//    }
-//
-//    func watchWalletRecords() -> Signal<[WalletStateRecord], NoError> {
-//        return self.postbox.preferencesView(keys: [PreferencesKeys.walletCollection])
-//            |> map { view -> [WalletStateRecord] in
-//                guard let walletCollection = view.values[PreferencesKeys.walletCollection] as? WalletCollection else {
-//                    return []
-//                }
-//                return walletCollection.wallets.compactMap { item -> WalletStateRecord? in
-//                    do {
-//                        return WalletStateRecord(info: try JSONDecoder().decode(WalletInfo.self, from: item.info), exportCompleted: item.exportCompleted, state: item.state.flatMap { try? JSONDecoder().decode(CombinedWalletState.self, from: $0) })
-//                    } catch {
-//                        return nil
-//                    }
-//                }
-//        }
-//    }
-//
-//    func getWalletRecords() -> Signal<[WalletStateRecord], NoError> {
-//        return self.postbox.transaction { transaction -> [WalletStateRecord] in
-//            guard let walletCollection = transaction.getPreferencesEntry(key: PreferencesKeys.walletCollection) as? WalletCollection else {
-//                return []
-//            }
-//            return walletCollection.wallets.compactMap { item -> WalletStateRecord? in
-//                do {
-//                    return WalletStateRecord(info: try JSONDecoder().decode(WalletInfo.self, from: item.info), exportCompleted: item.exportCompleted, state: item.state.flatMap { try? JSONDecoder().decode(CombinedWalletState.self, from: $0) })
-//                } catch {
-//                    return nil
-//                }
-//            }
-//        }
-//    }
-//
-//    func updateWalletRecords(_ f: @escaping ([WalletStateRecord]) -> [WalletStateRecord]) -> Signal<[WalletStateRecord], NoError> {
-//        return self.postbox.transaction { transaction -> [WalletStateRecord] in
-//            let updatedRecords: [WalletStateRecord] = []
-//            transaction.updatePreferencesEntry(key: PreferencesKeys.walletCollection, { current in
-//                var walletCollection = (current as? WalletCollection) ?? WalletCollection(wallets: [])
-//                let updatedItems = f(walletCollection.wallets.compactMap { item -> WalletStateRecord? in
-//                    do {
-//                        return WalletStateRecord(info: try JSONDecoder().decode(WalletInfo.self, from: item.info), exportCompleted: item.exportCompleted, state: item.state.flatMap { try? JSONDecoder().decode(CombinedWalletState.self, from: $0) })
-//                    } catch {
-//                        return nil
-//                    }
-//                })
-//                walletCollection.wallets = updatedItems.compactMap { item in
-//                    do {
-//                        return WalletCollectionItem(info: try JSONEncoder().encode(item.info), exportCompleted: item.exportCompleted, state: item.state.flatMap {
-//                            try? JSONEncoder().encode($0)
-//                        })
-//                    } catch {
-//                        return nil
-//                    }
-//                }
-//                return walletCollection
-//            })
-//            return updatedRecords
-//        }
-//    }
-//
-//    func localWalletConfiguration() -> Signal<LocalWalletConfiguration, NoError> {
-//        return .single(LocalWalletConfiguration(source: .string(""), blockchainName: ""))
-//    }
-//
-//    func updateLocalWalletConfiguration(_ f: @escaping (LocalWalletConfiguration) -> LocalWalletConfiguration) -> Signal<Never, NoError> {
-//        return .complete()
-//    }
-//}
-//
-//final class StoredTonContext {
-//    private let basePath: String
-//    private let postbox: Postbox
-//    private let network: Network
-//    let keychain: TonKeychain
-//    private let currentInstance = Atomic<TonInstanceData>(value: TonInstanceData())
-//
-//    init(basePath: String, postbox: Postbox, network: Network, keychain: TonKeychain) {
-//        self.basePath = basePath
-//        self.postbox = postbox
-//        self.network = network
-//        self.keychain = keychain
-//    }
-//
-//    func context(config: String, blockchainName: String, enableProxy: Bool) -> TonContext {
-//        return self.currentInstance.with { data -> TonContext in
-//            if let instance = data.instance, data.config == config, data.blockchainName == blockchainName {
-//                return TonContext(instance: instance, keychain: self.keychain, storage: WalletStorageInterfaceImpl(postbox: self.postbox))
-//            } else {
-//                data.config = config
-//                let tonNetwork: TonNetworkProxy?
-//                if enableProxy {
-//                    tonNetwork = TonNetworkProxyImpl(network: self.network)
-//                } else {
-//                    tonNetwork = nil
-//                }
-//                let instance = TonInstance(basePath: self.basePath, config: config, blockchainName: blockchainName, proxy: tonNetwork)
-//                data.instance = instance
-//                return TonContext(instance: instance, keychain: self.keychain, storage: WalletStorageInterfaceImpl(postbox: self.postbox))
-//            }
-//        }
-//    }
-//}
-//
-////struct TonContext {
-////    let instance: TonInstance
-////    let keychain: TonKeychain
-////    let storage: WalletStorageInterfaceImpl
-////    init(instance: TonInstance, keychain: TonKeychain, storage: WalletStorageInterfaceImpl) {
-////        self.instance = instance
-////        self.keychain = keychain
-////        self.storage = storage
-////    }
-////}
-
 
 enum ApplyThemeUpdate {
     case local(ColorPalette)
@@ -187,7 +50,9 @@ final class AccountContextBindings {
     let entertainment:()->EntertainmentViewController
     let needFullsize:()->Void
     let displayUpgradeProgress:(CGFloat)->Void
-    init(rootNavigation: @escaping() -> MajorNavigationController = { fatalError() }, mainController: @escaping() -> MainViewController = { fatalError() }, showControllerToaster: @escaping(ControllerToaster, Bool) -> Void = { _, _ in fatalError() }, globalSearch: @escaping(String) -> Void = { _ in fatalError() }, entertainment: @escaping()->EntertainmentViewController = { fatalError() }, switchSplitLayout: @escaping(SplitViewState)->Void = { _ in fatalError() }, needFullsize: @escaping() -> Void = { fatalError() }, displayUpgradeProgress: @escaping(CGFloat)->Void = { _ in fatalError() }) {
+    let callSession: ()->PCallSession?
+    let groupCall: ()->GroupCallContext?
+    init(rootNavigation: @escaping() -> MajorNavigationController = { fatalError() }, mainController: @escaping() -> MainViewController = { fatalError() }, showControllerToaster: @escaping(ControllerToaster, Bool) -> Void = { _, _ in fatalError() }, globalSearch: @escaping(String) -> Void = { _ in fatalError() }, entertainment: @escaping()->EntertainmentViewController = { fatalError() }, switchSplitLayout: @escaping(SplitViewState)->Void = { _ in fatalError() }, needFullsize: @escaping() -> Void = { fatalError() }, displayUpgradeProgress: @escaping(CGFloat)->Void = { _ in fatalError() }, callSession: @escaping()->PCallSession? = { return nil }, groupCall: @escaping()->GroupCallContext? = { return nil }) {
         self.rootNavigation = rootNavigation
         self.mainController = mainController
         self.showControllerToaster = showControllerToaster
@@ -196,9 +61,15 @@ final class AccountContextBindings {
         self.switchSplitLayout = switchSplitLayout
         self.needFullsize = needFullsize
         self.displayUpgradeProgress = displayUpgradeProgress
+        self.callSession = callSession
+        self.groupCall = groupCall
     }
     #endif
 }
+
+private var lastTimeFreeSpaceNotified: TimeInterval?
+
+
 
 final class AccountContext {
     let sharedContext: SharedAccountContext
@@ -208,6 +79,7 @@ final class AccountContext {
     #if !SHARE
     let fetchManager: FetchManager
     let diceCache: DiceCache
+    let cachedGroupCallContexts: AccountGroupCallContextCacheImpl
     #endif
     private(set) var timeDifference:TimeInterval  = 0
     #if !SHARE
@@ -215,6 +87,9 @@ final class AccountContext {
     let chatUndoManager = ChatUndoManager()
     let blockedPeersContext: BlockedPeersContext
     let activeSessionsContext: ActiveSessionsContext
+    let cacheCleaner: AccountClearCache
+    
+    
  //   let walletPasscodeTimeoutContext: WalletPasscodeTimeoutContext
     #endif
     
@@ -263,11 +138,25 @@ final class AccountContext {
     private let actualizeCloudTheme = MetaDisposable()
     private let applyThemeDisposable = MetaDisposable()
     private let cloudThemeObserver = MetaDisposable()
+    private let freeSpaceDisposable = MetaDisposable()
     private let prefDisposable = DisposableSet()
     private let _limitConfiguration: Atomic<LimitsConfiguration> = Atomic(value: LimitsConfiguration.defaultValue)
     
     var limitConfiguration: LimitsConfiguration {
         return _limitConfiguration.with { $0 }
+    }
+    
+    private let _appConfiguration: Atomic<AppConfiguration> = Atomic(value: AppConfiguration.defaultValue)
+    
+    var appConfiguration: AppConfiguration {
+        return _appConfiguration.with { $0 }
+    }
+    
+    
+    private let isKeyWindowValue: ValuePromise<Bool> = ValuePromise(ignoreRepeated: true)
+    
+    var isKeyWindow: Signal<Bool, NoError> {
+        return isKeyWindowValue.get() |> deliverOnMainQueue
     }
     
     private let _autoplayMedia: Atomic<AutoplayMediaPreferences> = Atomic(value: AutoplayMediaPreferences.defaultSettings)
@@ -279,6 +168,7 @@ final class AccountContext {
 
     var isInGlobalSearch: Bool = false
     
+    
     private let _contentSettings: Atomic<ContentSettings> = Atomic(value: ContentSettings.default)
     
     var contentSettings: ContentSettings {
@@ -289,27 +179,70 @@ final class AccountContext {
     
     public var closeFolderFirst: Bool = false
     
+    private let preloadGifsDisposable = MetaDisposable()
+    let engine: TelegramEngine
+
+    
     //, tonContext: StoredTonContext?
     init(sharedContext: SharedAccountContext, window: Window, account: Account) {
         self.sharedContext = sharedContext
         self.account = account
         self.window = window
+        self.engine = TelegramEngine(account: account)
        // self.tonContext = tonContext
         #if !SHARE
         self.diceCache = DiceCache(postbox: account.postbox, network: account.network)
         self.fetchManager = FetchManager(postbox: account.postbox)
         self.blockedPeersContext = BlockedPeersContext(account: account)
         self.activeSessionsContext = ActiveSessionsContext(account: account)
+        self.cacheCleaner = AccountClearCache(account: account)
+        self.cachedGroupCallContexts = AccountGroupCallContextCacheImpl()
      //   self.walletPasscodeTimeoutContext = WalletPasscodeTimeoutContext(postbox: account.postbox)
         #endif
         
         
-        
+        repliesPeerId = account.testingEnvironment ? test_repliesPeerId : prod_repliesPeerId
         
         let limitConfiguration = _limitConfiguration
         prefDisposable.add(account.postbox.preferencesView(keys: [PreferencesKeys.limitsConfiguration]).start(next: { view in
             _ = limitConfiguration.swap(view.values[PreferencesKeys.limitsConfiguration] as? LimitsConfiguration ?? LimitsConfiguration.defaultValue)
         }))
+        let preloadGifsDisposable = self.preloadGifsDisposable
+        let appConfiguration = _appConfiguration
+        prefDisposable.add(account.postbox.preferencesView(keys: [PreferencesKeys.appConfiguration]).start(next: { view in
+            let configuration = view.values[PreferencesKeys.appConfiguration] as? AppConfiguration ?? AppConfiguration.defaultValue
+            _ = appConfiguration.swap(configuration)
+            
+            
+        }))
+        
+        #if !SHARE
+        let signal:Signal<Void, NoError> = Signal { subscriber in
+            
+            let signal: Signal<Never, NoError> = account.postbox.transaction {
+                return $0.getPreferencesEntry(key: PreferencesKeys.appConfiguration) as? AppConfiguration ?? AppConfiguration.defaultValue
+            } |> mapToSignal { configuration in
+                let value = GIFKeyboardConfiguration.with(appConfiguration: configuration)
+                var signals = value.emojis.map {
+                    searchGifs(account: account, query: $0)
+                }
+                signals.insert(searchGifs(account: account, query: ""), at: 0)
+                return combineLatest(signals) |> ignoreValues
+            }
+            
+            let disposable = signal.start(completed: {
+                subscriber.putCompletion()
+            })
+            
+            return ActionDisposable {
+                disposable.dispose()
+            }
+        }
+        
+        let updated = (signal |> then(.complete() |> suspendAwareDelay(20.0 * 60.0, queue: Queue.concurrentDefaultQueue()))) |> restart
+        preloadGifsDisposable.set(updated.start())
+        
+        #endif
         
         let autoplayMedia = _autoplayMedia
         prefDisposable.add(account.postbox.preferencesView(keys: [ApplicationSpecificPreferencesKeys.autoplayMedia]).start(next: { view in
@@ -325,13 +258,13 @@ final class AccountContext {
         globalPeerHandler.set(.single(nil))
         
         if account.network.globalTime > 0 {
-            timeDifference = account.network.globalTime - Date().timeIntervalSince1970
+            timeDifference = floor(account.network.globalTime - Date().timeIntervalSince1970)
         }
         
         updateDifferenceDisposable.set((Signal<Void, NoError>.single(Void())
             |> delay(5, queue: Queue.mainQueue()) |> restart).start(next: { [weak self, weak account] in
                 if let account = account, account.network.globalTime > 0 {
-                    self?.timeDifference = account.network.globalTime - Date().timeIntervalSince1970
+                    self?.timeDifference = floor(account.network.globalTime - Date().timeIntervalSince1970)
                 }
         }))
         
@@ -355,8 +288,52 @@ final class AccountContext {
         }))
         
         
+        NotificationCenter.default.addObserver(self, selector: #selector(updateKeyWindow), name: NSWindow.didBecomeKeyNotification, object: window)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateKeyWindow), name: NSWindow.didResignKeyNotification, object: window)
+        
+        
+        #if !SHARE
+        var freeSpaceSignal:Signal<UInt64?, NoError> = Signal { subscriber in
+            
+            subscriber.putNext(freeSystemGygabytes())
+            subscriber.putCompletion()
+            
+            return ActionDisposable {
+                
+        }
+        } |> runOn(.concurrentDefaultQueue())
+        
+        freeSpaceSignal = (freeSpaceSignal |> then(.complete() |> suspendAwareDelay(60.0 * 30, queue: Queue.concurrentDefaultQueue()))) |> restart
+        
+        
+        let isLocked = (NSApp.delegate as? AppDelegate)?.passlock ?? .single(false)
+        
+        
+        freeSpaceDisposable.set(combineLatest(queue: .mainQueue(), freeSpaceSignal, isKeyWindow, isLocked).start(next: { [weak self] space, isKeyWindow, locked in
+            
+            
+            let limit: UInt64 = 5
+            
+            guard let `self` = self, isKeyWindow, !locked, let space = space, space < limit else {
+                return
+            }
+            if lastTimeFreeSpaceNotified == nil || (lastTimeFreeSpaceNotified! + 60.0 * 60.0 * 3 < Date().timeIntervalSince1970) {
+                lastTimeFreeSpaceNotified = Date().timeIntervalSince1970
+                showOutOfMemoryWarning(window, freeSpace: space, context: self)
+            }
+            
+        }))
+        
+        account.callSessionManager.updateVersions(versions: OngoingCallContext.versions(includeExperimental: true, includeReference: false).map { version, supportsVideo -> CallSessionManagerImplementationVersion in
+            CallSessionManagerImplementationVersion(version: version, supportsVideo: supportsVideo)
+        })
+        
+        #endif
     }
     
+    @objc private func updateKeyWindow() {
+        self.isKeyWindowValue.set(window.isKeyWindow)
+    }
     
     private func updateTheme(_ update: ApplyThemeUpdate) {
         switch update {
@@ -413,7 +390,9 @@ final class AccountContext {
         actualizeCloudTheme.dispose()
         applyThemeDisposable.dispose()
         cloudThemeObserver.dispose()
-        
+        preloadGifsDisposable.dispose()
+        freeSpaceDisposable.dispose()
+        NotificationCenter.default.removeObserver(self)
         #if !SHARE
       //  self.walletPasscodeTimeoutContext.clear()
         self.diceCache.cleanup()
@@ -438,6 +417,42 @@ final class AccountContext {
     }
     
     
+    func chatLocationInput(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>) -> ChatLocationInput {
+        switch location {
+        case let .peer(peerId):
+            return .peer(peerId)
+        case let .replyThread(data):
+            let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
+            return .external(data.messageId.peerId, makeMessageThreadId(data.messageId), context.state)
+        }
+    }
+    
+    func chatLocationOutgoingReadState(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>) -> Signal<MessageId?, NoError> {
+        switch location {
+        case .peer:
+            return .single(nil)
+        case let .replyThread(data):
+            let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
+            return context.maxReadOutgoingMessageId
+        }
+    }
+
+
+    
+    func applyMaxReadIndex(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>, messageIndex: MessageIndex) {
+        switch location {
+        case .peer:
+            let _ = applyMaxReadIndexInteractively(postbox: self.account.postbox, stateManager: self.account.stateManager, index: messageIndex).start()
+        case let .replyThread(data):
+            let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
+            context.applyMaxReadIndex(messageIndex: messageIndex)
+        }
+    }
+
+
+
+
+    
     #if !SHARE
     func composeCreateGroup() {
         createGroup(with: self)
@@ -447,15 +462,16 @@ final class AccountContext {
     }
     func composeCreateSecretChat() {
         let account = self.account
+        let window = self.window
         let confirmationImpl:([PeerId])->Signal<Bool, NoError> = { peerIds in
             if let first = peerIds.first, peerIds.count == 1 {
                 return account.postbox.loadedPeerWithId(first) |> deliverOnMainQueue |> mapToSignal { peer in
-                    return confirmSignal(for: mainWindow, information: L10n.composeConfirmStartSecretChat(peer.displayTitle))
+                    return confirmSignal(for: window, information: L10n.composeConfirmStartSecretChat(peer.displayTitle))
                 }
             }
-            return confirmSignal(for: mainWindow, information: L10n.peerInfoConfirmAddMembers1Countable(peerIds.count))
+            return confirmSignal(for: window, information: L10n.peerInfoConfirmAddMembers1Countable(peerIds.count))
         }
-        let select = selectModalPeers(context: self, title: L10n.composeSelectSecretChat, limit: 1, confirmation: confirmationImpl)
+        let select = selectModalPeers(window: window, account: self.account, title: L10n.composeSelectSecretChat, limit: 1, confirmation: confirmationImpl)
         
         let create = select |> map { $0.first! } |> mapToSignal { peerId in
             return createSecretChat(account: account, peerId: peerId) |> `catch` {_ in .complete()}
@@ -681,3 +697,22 @@ func downloadAndApplyCloudTheme(context: AccountContext, theme cloudTheme: Teleg
 }
 
 
+
+private func chatLocationContext(holder: Atomic<ChatLocationContextHolder?>, account: Account, data: ChatReplyThreadMessage) -> ReplyThreadHistoryContext {
+    let holder = holder.modify { current in
+        if let current = current as? ChatLocationContextHolderImpl {
+            return current
+        } else {
+            return ChatLocationContextHolderImpl(account: account, data: data)
+        }
+        } as! ChatLocationContextHolderImpl
+    return holder.context
+}
+
+private final class ChatLocationContextHolderImpl: ChatLocationContextHolder {
+    let context: ReplyThreadHistoryContext
+    
+    init(account: Account, data: ChatReplyThreadMessage) {
+        self.context = ReplyThreadHistoryContext(account: account, peerId: data.messageId.peerId, data: data)
+    }
+}

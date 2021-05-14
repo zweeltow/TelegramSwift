@@ -20,10 +20,16 @@ extension Message {
     }
 }
 
+func makeNewDateFormatter() -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = appAppearance.locale
+    return formatter
+}
+
 
 extension NSMutableAttributedString {
-    func detectLinks(type:ParsingType, context:AccountContext? = nil, color:NSColor = theme.colors.link, openInfo:((PeerId, Bool, MessageId?, ChatInitialAction?)->Void)? = nil, hashtag:((String)->Void)? = nil, command:((String)->Void)? = nil, applyProxy:((ProxyServerSettings)->Void)? = nil, dotInMention: Bool = false) -> Void {
-        let things = ObjcUtils.textCheckingResults(forText: self.string, highlightMentionsAndTags: type.contains(.Mentions) || type.contains(.Hashtags), highlightCommands: type.contains(.Commands), dotInMention: dotInMention)
+    func detectLinks(type:ParsingType, onlyInApp: Bool = false, context:AccountContext? = nil, color:NSColor = theme.colors.link, openInfo:((PeerId, Bool, MessageId?, ChatInitialAction?)->Void)? = nil, hashtag:((String)->Void)? = nil, command:((String)->Void)? = nil, applyProxy:((ProxyServerSettings)->Void)? = nil, dotInMention: Bool = false) -> Void {
+        let things = ObjcUtils.textCheckingResults(forText: self.string, highlightMentions: type.contains(.Mentions), highlightTags: type.contains(.Hashtags), highlightCommands: type.contains(.Commands), dotInMention: dotInMention)
         
         self.beginEditing()
         
@@ -32,15 +38,45 @@ extension NSMutableAttributedString {
                 
                 let range = (value as! NSValue).rangeValue
                 
+                var addLinkAttrs: Bool = false
+                
                 if range.location != NSNotFound {
                     let sublink = (self.string as NSString).substring(with: range)
                     if let context = context {
-                        self.addAttribute(NSAttributedString.Key.link, value: inApp(for: sublink as NSString, context: context, openInfo: openInfo, hashtag: hashtag, command: command, applyProxy: applyProxy), range: range)
+                        let link = inApp(for: sublink as NSString, context: context, openInfo: openInfo, hashtag: hashtag, command: command, applyProxy: applyProxy)
+                        if onlyInApp {
+                            switch link {
+                            case let .external(link, _):
+                                let allowed = ["telegram.org", "telegram.dog", "telegram.me", "telegra.ph", "telesco.pe"]
+                                if let url = URL(string: link) {
+                                    if let host = url.host, allowed.contains(host) {
+                                        self.addAttribute(NSAttributedString.Key.link, value: inAppLink.external(link: sublink, false), range: range)
+                                        addLinkAttrs = true
+                                    } else if allowed.contains(link) {
+                                        self.addAttribute(NSAttributedString.Key.link, value: inAppLink.external(link: sublink, false), range: range)
+                                        addLinkAttrs = true
+                                    }
+                                } else {
+                                    continue
+                                }
+                            default:
+                                self.addAttribute(NSAttributedString.Key.link, value: link, range: range)
+                                addLinkAttrs = true
+                            }
+                        } else {
+                            self.addAttribute(NSAttributedString.Key.link, value: link, range: range)
+                            addLinkAttrs = true
+                        }
                     } else {
-                        self.addAttribute(NSAttributedString.Key.link, value: inAppLink.external(link: sublink, false), range: range)
+                        if !onlyInApp {
+                            self.addAttribute(NSAttributedString.Key.link, value: inAppLink.external(link: sublink, false), range: range)
+                            addLinkAttrs = true
+                        }
                     }
-                    self.addAttribute(NSAttributedString.Key.foregroundColor, value: color, range: range)
-                    self.addAttribute(.cursor, value: NSCursor.pointingHand, range: range)
+                    if addLinkAttrs {
+                        self.addAttribute(NSAttributedString.Key.foregroundColor, value: color, range: range)
+                        self.addAttribute(.cursor, value: NSCursor.pointingHand, range: range)
+                    }
                 }
                 
             }
@@ -67,6 +103,8 @@ extension NSMutableAttributedString {
         }
     }
     
+   // while
+  //  7️⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣⃣
 }
 
 
@@ -88,6 +126,7 @@ public extension String {
         str = str.replacingOccurrences(of: "8⃣", with: "8️⃣")
         str = str.replacingOccurrences(of: "9⃣", with: "9️⃣")
         str = str.replacingOccurrences(of: "0⃣", with: "0️⃣")
+        str = str.replacingOccurrences(of: "#⃣", with: "#️⃣")
         str = str.replacingOccurrences(of: "❤", with: "❤️")
         str = str.replacingOccurrences(of: "♥", with: "❤️")
         str = str.replacingOccurrences(of: "☁", with: "☁️")
@@ -98,7 +137,11 @@ public extension String {
         str = str.replacingOccurrences(of: "◻", with: "◻️")
         str = str.replacingOccurrences(of: "◼", with: "◼️")
         str = str.replacingOccurrences(of: "➡", with: "➡️")
+        str = str.replacingOccurrences(of: "⚰", with: "⚰️")
+        str = str.replacingOccurrences(of: "⚡", with: "⚡️")
+
         
+            
 
         return str
     }
@@ -139,6 +182,33 @@ public extension String {
             }
         }
         return text as String
+    }
+}
+
+extension NSAttributedString {
+    var stringEmojiReplacements:NSAttributedString {
+        let text:NSMutableAttributedString = self.mutableCopy() as! NSMutableAttributedString
+        
+        for(key, obj) in emojiReplacements {
+            var nextRange = NSRange(location: 0, length: text.length)
+            var emojiRange = text.string.nsstring.range(of: key, options: [], range: nextRange)
+            while emojiRange.location != NSNotFound {
+                var length: Int = emojiRange.length
+                var c_prev: String = "!"
+                var c_next: String = "!"
+                let r_p = NSRange(location: max(0, Int(emojiRange.location) - 1), length: emojiRange.location == 0 ? 0 : 1)
+                let r_n = NSRange(location: max(0, emojiRange.length + emojiRange.location), length: min(1, text.length - (emojiRange.location + emojiRange.length)))
+                c_prev = text.string.nsstring.substring(with: r_p)
+                c_next = text.string.nsstring.substring(with: r_n)
+                if c_prev.trimmed.length == 0 && c_next.trimmed.length == 0 {
+                    text.replaceCharacters(in: emojiRange, with: obj)
+                    length = obj.length
+                }
+                nextRange = NSRange(location: emojiRange.location + length, length: text.length - emojiRange.location - length)
+                emojiRange = text.string.nsstring.range(of: key, options: [], range: nextRange)
+            }
+        }
+        return text
     }
 }
 
@@ -1698,6 +1768,7 @@ extension Array {
 }
 
 func copyToClipboard(_ string:String) {
+    NSPasteboard.general.clearContents()
     NSPasteboard.general.declareTypes([.string], owner: nil)
     NSPasteboard.general.setString(string, forType: .string)
 }
@@ -1793,14 +1864,30 @@ extension CGImage {
         
         let thumbnailImage: CGImage = self
         
-        let thumbnailContextSize = thumbnailImage.size
-        let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0)
+        let thumbnailContextSize = thumbnailImage.size.multipliedByScreenScale()
+        
+        let thumbnailContextSmallSize = thumbnailContextSize.aspectFitted(NSMakeSize(50, 50))
+        
+        let thumbnailContext = DrawingContext(size: thumbnailContextSmallSize, scale: 1.0)
+        
+        
+        
         thumbnailContext.withContext { ctx in
             ctx.interpolationQuality = .none
-            
             ctx.draw(thumbnailImage, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
         }
-        telegramFastBlur(Int32(thumbnailContextSize.width), Int32(thumbnailContextSize.height), Int32(thumbnailContext.bytesPerRow), thumbnailContext.bytes)
+        
+        telegramFastBlurMore(Int32(thumbnailContextSmallSize.width), Int32(thumbnailContextSmallSize.height), Int32(thumbnailContext.bytesPerRow), thumbnailContext.bytes)
+        
+        let thumb = DrawingContext(size: thumbnailContextSize, scale: 1.0)
+
+        
+        thumb.withContext { ctx in
+            ctx.interpolationQuality = .none
+            ctx.draw(thumbnailContext.generateImage()!, in: CGRect(origin: CGPoint(), size: thumbnailContextSize))
+        }
+      //  telegramFastBlurMore(Int32(thumbnailContextSize.width), Int32(thumbnailContextSize.height), Int32(thumb.bytesPerRow), thumb.bytes)
+
         
         return thumbnailContext.generateImage()!
     }
@@ -2200,6 +2287,12 @@ extension Date {
         
         return Int32(bootTime.tv_sec)
     }
+    var isToday: Bool {
+        return CalendarUtils.isSameDate(self, date: Date(), checkDay: true)
+    }
+    var isTomorrow: Bool {
+        return Calendar.current.isDateInTomorrow(self)
+    }
 }
 
 
@@ -2281,6 +2374,34 @@ func transformedWithFitzModifier(data: Data, fitzModifier: EmojiFitzModifier?) -
     }
 }
 
+func applyLottieColor(data: Data, color: NSColor) -> Data {
+    if var string = String(data: data, encoding: .utf8) {
+        func colorToString(_ color: NSColor) -> String {
+            var r: CGFloat = 0.0
+            var g: CGFloat = 0.0
+            var b: CGFloat = 0.0
+            color.getRed(&r, green: &g, blue: &b, alpha: nil)
+            return "\"k\":[\(r),\(g),\(b),1]"
+        }
+        var replacements: [(NSTextCheckingResult, String)] = []
+        if let colorKeyRegex = colorKeyRegex {
+            let results = colorKeyRegex.matches(in: string, range: NSRange(string.startIndex..., in: string))
+            for result in results.reversed()  {
+                replacements.append((result, colorToString(color)))
+            }
+        }
+        for (result, text) in replacements {
+            if let range = Range(result.range, in: string) {
+                string = string.replacingCharacters(in: range, with: text)
+            }
+        }
+        return string.data(using: .utf8) ?? data
+    } else {
+        return data
+    }
+}
+
+
 
 extension Double {
     
@@ -2322,5 +2443,194 @@ extension CGImage {
         CGImageDestinationAddImage(destination, self, nil)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return mutableData as Data
+    }
+}
+
+func localizedPsa(_ key: String, type: String, args: [CVarArg] = []) -> String {
+    let fullKey = key + "." + type
+    let cloud = translate(key: fullKey, args)
+    if cloud == fullKey {
+        return translate(key: key, args)
+    } else {
+        return cloud
+    }
+}
+
+func + (left: CGPoint, right: CGPoint) -> CGPoint {
+    return CGPoint(x: left.x + right.x, y: left.y + right.y)
+}
+func - (left: CGPoint, right: CGPoint) -> CGPoint {
+    return CGPoint(x: left.x - right.x, y: left.y - right.y)
+}
+func + (left: CGSize, right: CGSize) -> CGSize {
+    return CGSize(width: left.width + right.width, height: left.height + right.height)
+}
+func - (left: CGSize, right: CGSize) -> CGSize {
+    return CGSize(width: left.width - right.width, height: left.height - right.height)
+}
+
+
+func freeSystemGygabytes() -> UInt64? {
+    let attrs = try? FileManager.default.attributesOfFileSystem(forPath: "/")
+    
+    if let freeBytes = attrs?[FileAttributeKey.systemFreeSize] as? UInt64 {
+        return freeBytes / 1073741824
+    }
+    return nil
+}
+
+func showOutOfMemoryWarning(_ window: Window, freeSpace: UInt64, context: AccountContext) {
+    let alert: NSAlert = NSAlert()
+    alert.addButton(withTitle: L10n.systemMemoryWarningOK)
+    alert.addButton(withTitle: L10n.systemMemoryWarningDataAndStorage)
+   // alert.addButton(withTitle: L10n.systemMemoryWarningManageSystemStorage)
+    
+    alert.messageText = L10n.systemMemoryWarningHeader
+    alert.informativeText = L10n.systemMemoryWarningText(freeSpace == 0 ? L10n.systemMemoryWarningLessThen1GB : L10n.systemMemoryWarningFreeSpace(Int(freeSpace)))
+    alert.alertStyle = .critical
+    
+    alert.beginSheetModal(for: window, completionHandler: { response in
+        switch response.rawValue {
+        case 1000:
+            break
+        case 1001:
+            context.sharedContext.bindings.rootNavigation().push(StorageUsageController(context))
+        case 1002:
+            openSystemSettings(.storage)
+        default:
+            break
+        }
+    })
+}
+
+
+
+extension NSCursor  {
+    static var set_windowResizeNorthWestSouthEastCursor: NSCursor? {
+        return ObjcUtils.windowResizeNorthWestSouthEastCursor()
+    }
+    static var set_windowResizeNorthEastSouthWestCursor: NSCursor? {
+        return ObjcUtils.windowResizeNorthEastSouthWestCursor()
+    }
+}
+
+extension NSImage {
+    var _cgImage: CGImage? {
+        return self.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }
+}
+
+
+func truncate(double: Double, places : Int)-> Double
+{
+    return Double(floor(pow(10.0, Double(places)) * double)/pow(10.0, Double(places)))
+}
+
+
+
+
+struct DateSelectorUtil {
+    
+    static var timeIntervals:[TimeInterval?]  {
+        var intervals:[TimeInterval?] = []
+        for i in 0 ... 23 {
+            let current = Double(i) * 60.0 * 60
+            intervals.append(current)
+    //        #if DEBUG
+            for i in 1 ... 59 {
+                intervals.append(current + Double(i) * 60.0)
+            }
+            if i < 23 {
+                intervals.append(nil)
+            }
+
+        }
+        return intervals
+    }
+
+    static var dayFormatter: DateFormatter {
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: appAppearance.language.languageCode)
+        //dateFormatter.timeZone = TimeZone(abbreviation: "UTC")!
+        dateFormatter.dateFormat = "MMM d, yyyy"
+        return dateFormatter
+    }
+
+    static var dayFormatterRelative: DateFormatter {
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: appAppearance.language.languageCode)
+       // dateFormatter.timeZone = TimeZone(abbreviation: "UTC")!
+
+        dateFormatter.dateStyle = .short
+        dateFormatter.doesRelativeDateFormatting = true
+        return dateFormatter
+    }
+
+    static func formatDay(_ date: Date) -> String {
+        if CalendarUtils.isSameDate(date, date: Date(), checkDay: true) {
+            return dayFormatterRelative.string(from: date)
+        } else {
+            return dayFormatter.string(from: date)
+        }
+    }
+
+    static func formatTime(_ date: Date) -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .medium
+       // timeFormatter.timeZone = TimeZone(abbreviation: "UTC")!
+        return timeFormatter.string(from: date)
+    }
+}
+
+
+extension Int32 {
+    static var secondsInDay: Int32 {
+        return 60 * 60 * 24
+    }
+    static var secondsInWeek: Int32 {
+        return secondsInDay * 7
+    }
+}
+
+
+func smartTimeleftText( _ left: Int) -> String {
+    if left <= Int(Int32.secondsInDay) {
+        let minutes = left / 60 % 60
+        let seconds = left % 60
+        let hours = left / 60 / 60
+        let string = String(format: "%@:%@:%@", hours < 10 ? "0\(hours)" : "\(hours)", minutes < 10 ? "0\(minutes)" : "\(minutes)", seconds < 10 ? "0\(seconds)" : "\(seconds)")
+        return string
+    } else {
+        return autoremoveLocalized(left, roundToCeil: true)
+    }
+}
+
+
+public typealias UIImage = NSImage
+
+extension NSImage {
+    
+    enum Orientation {
+        case up
+        case down
+    }
+    
+    convenience init(cgImage: CGImage, scale: CGFloat, orientation: UIImage.Orientation) {
+        self.init(cgImage: cgImage, size: cgImage.systemSize)
+    }
+}
+
+public extension DataSizeStringFormatting {
+    
+    static var current: DataSizeStringFormatting {
+        return DataSizeStringFormatting.init(decimalSeparator: NumberFormatter().decimalSeparator, byte: { value in
+            return (L10n.fileSizeB(value), [])
+        }, kilobyte: { value in
+            return (L10n.fileSizeKB(value), [])
+        }, megabyte: { value in
+            return (L10n.fileSizeMB(value), [])
+        }, gigabyte: { value in
+            return (L10n.fileSizeGB(value), [])
+        })
     }
 }

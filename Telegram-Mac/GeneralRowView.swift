@@ -12,7 +12,7 @@ import TGUIKit
 
 class GeneralContainableRowView : TableRowView {
     let containerView = GeneralRowContainerView(frame: NSZeroRect)
-    private let borderView: View = View()
+    let borderView: View = View()
     required init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         super.addSubview(self.containerView)
@@ -27,8 +27,20 @@ class GeneralContainableRowView : TableRowView {
         self.containerView.addSubview(view)
     }
     
+    override func addSubview(_ view: NSView, positioned place: NSWindow.OrderingMode, relativeTo otherView: NSView?) {
+        self.containerView.addSubview(view, positioned: place, relativeTo: otherView)
+    }
+    
     override var backdorColor: NSColor {
         return theme.colors.background
+    }
+    
+    override var mouseDownCanMoveWindow: Bool {
+        return false
+    }
+    
+    var borderColor: NSColor {
+        return theme.colors.border
     }
     
     override func updateColors() {
@@ -37,7 +49,17 @@ class GeneralContainableRowView : TableRowView {
         }
         self.backgroundColor = item.viewType.rowBackground
         self.containerView.backgroundColor = backdorColor
-        self.borderView.backgroundColor = theme.colors.border
+        self.borderView.backgroundColor = borderColor
+    }
+    
+    var maxBlockWidth: CGFloat {
+        return 600
+    }
+    var maxWidth: CGFloat {
+        return frame.width
+    }
+    var maxHeight: CGFloat {
+        return frame.height
     }
     
     override func layout() {
@@ -45,12 +67,18 @@ class GeneralContainableRowView : TableRowView {
         guard let item = item as? GeneralRowItem else {
             return
         }
-        let blockWidth = min(600, frame.width - item.inset.left - item.inset.right)
+        let blockWidth = min(maxBlockWidth, frame.width - item.inset.left - item.inset.right)
         
-        self.containerView.frame = NSMakeRect(floorToScreenPixels(backingScaleFactor, (frame.width - blockWidth) / 2), item.inset.top, blockWidth, frame.height - item.inset.bottom - item.inset.top)
+        self.containerView.frame = NSMakeRect(floorToScreenPixels(backingScaleFactor, (maxWidth - blockWidth) / 2), item.inset.top, blockWidth, maxHeight - item.inset.bottom - item.inset.top)
         self.containerView.setCorners(item.viewType.corners)
-        
-        borderView.frame = NSMakeRect(item.viewType.innerInset.left, containerView.frame.height - .borderSize, containerView.frame.width - item.viewType.innerInset.left - item.viewType.innerInset.right, .borderSize)
+
+
+
+        borderView.frame = NSMakeRect(item.viewType.innerInset.left + additionBorderInset, containerView.frame.height - .borderSize, containerView.frame.width - item.viewType.innerInset.left - item.viewType.innerInset.right - additionBorderInset, .borderSize)
+    }
+
+    var additionBorderInset: CGFloat {
+        return 0
     }
     
     override func set(item: TableRowItem, animated: Bool = false) {
@@ -60,7 +88,7 @@ class GeneralContainableRowView : TableRowView {
             return
         }
         
-        borderView.isHidden = !item.viewType.hasBorder
+        borderView.isHidden = !item.hasBorder
     }
     
     required init?(coder: NSCoder) {
@@ -69,11 +97,15 @@ class GeneralContainableRowView : TableRowView {
 }
 
 class GeneralRowContainerView : Control {
+    
+    var cornerRadius: CGFloat = 10
+    
     private let maskLayer = CAShapeLayer()
     private var newPath: CGPath?
     required init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         layer?.mask = maskLayer
+        self.maskLayer.disableActions()
     }
     
     private var corners: GeneralViewItemCorners? = nil
@@ -93,9 +125,9 @@ class GeneralRowContainerView : Control {
             self.newPath = newPath
             
             self.maskLayer.animate(from: oldPath, to: newPath, keyPath: "path", timingFunction: .easeOut, duration: 0.18, removeOnCompletion: false, additive: false, completion: { [weak self] completed in
-                if completed {
+                //if completed {
                     self?.maskLayer.removeAllAnimations()
-                }
+               // }
                 self?.maskLayer.path = newPath
             })
             
@@ -119,16 +151,16 @@ class GeneralRowContainerView : Control {
         
         
         if corners.contains(.topLeft)  {
-            bottomLeftRadius = 10
+            bottomLeftRadius = cornerRadius
         }
         if corners.contains(.topRight) {
-            bottomRightRadius = 10
+            bottomRightRadius = cornerRadius
         }
         if corners.contains(.bottomLeft) {
-            topLeftRadius = 10
+            topLeftRadius = cornerRadius
         }
         if corners.contains(.bottomRight) {
-            topRightRadius = 10
+            topRightRadius = cornerRadius
         }
         
         path.addArc(tangent1End: NSMakePoint(minx, miny), tangent2End: NSMakePoint(midx, miny), radius: bottomLeftRadius)
@@ -267,6 +299,14 @@ class GeneralRowView: TableRowView,ViewDisplayDelegate {
             return .clear
         }
         return item.backgroundColor
+    }
+    
+    override var mouseDownCanMoveWindow: Bool {
+        if self.className == GeneralRowView.className() {
+            return item?.table?._mouseDownCanMoveWindow ?? super.mouseDownCanMoveWindow
+        } else {
+            return false
+        }
     }
     
 }

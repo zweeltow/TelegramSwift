@@ -167,7 +167,7 @@ private func channelDiscussionEntries(state: DiscussionState, arguments: Discuss
         for (i, peer) in peers.enumerated() {
             
             let status = peer.addressName != nil ? "@\(peer.addressName!)" : (peer.isSupergroup || peer.isGroup ? L10n.discussionControllerPrivateGroup : L10n.discussionControllerPrivateChannel)
-            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_peer(peer.id), equatable: InputDataEquatable(PeerEquatable(peer: peer)), item: { initialSize, stableId in
+            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_peer(peer.id), equatable: InputDataEquatable(PeerEquatable(peer: peer)), comparable: nil, item: { initialSize, stableId in
                 return ShortPeerRowItem(initialSize, peer: peer, account: arguments.context.account, status: status, inset: NSEdgeInsetsMake(0, 30, 0, 30), viewType: i == 0 ? .innerItem : bestGeneralViewType(peers, for: i), action: {
                     arguments.setup(peer)
                 })
@@ -179,14 +179,14 @@ private func channelDiscussionEntries(state: DiscussionState, arguments: Discuss
     switch state.type {
     case .channel:
         if let associatedPeer = state.associatedPeer {
-            let text = L10n.discussionControllerChannelSetHeader(associatedPeer.displayTitle)
-            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_channel_header, equatable: InputDataEquatable(text), item: { initialSize, stableId in
+            let text = L10n.discussionControllerChannelSetHeader1(associatedPeer.displayTitle)
+            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_channel_header, equatable: InputDataEquatable(text), comparable: nil, item: { initialSize, stableId in
                 
                 let attributedString = NSMutableAttributedString()
                 _ = attributedString.append(string: text, color: theme.colors.grayText, font: .normal(.text))
                 attributedString.detectBoldColorInString(with: .medium(.text))
                 
-                return DiscussionHeaderItem(initialSize, stableId: stableId, icon: generateDiscussIcon(), text: attributedString)
+                return AnimtedStickerHeaderItem(initialSize, stableId: stableId, context: arguments.context, sticker: LocalAnimatedSticker.discussion, text: attributedString)
             }))
             index += 1
             
@@ -194,7 +194,7 @@ private func channelDiscussionEntries(state: DiscussionState, arguments: Discuss
             sectionId += 1
             
             let status = associatedPeer.addressName != nil ? "@\(associatedPeer.addressName!)" : (associatedPeer.isSupergroup ? L10n.discussionControllerPrivateGroup : L10n.discussionControllerPrivateChannel)
-            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_peer_info(associatedPeer.id), equatable: InputDataEquatable(PeerEquatable(peer: associatedPeer)), item: { initialSize, stableId in
+            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_peer_info(associatedPeer.id), equatable: InputDataEquatable(PeerEquatable(peer: associatedPeer)), comparable: nil, item: { initialSize, stableId in
                 return ShortPeerRowItem(initialSize, peer: associatedPeer, account: arguments.context.account, status: status, inset: NSEdgeInsetsMake(0, 30, 0, 30), viewType: .singleItem, action: {
                     arguments.openInfo(associatedPeer.id)
                 })
@@ -215,13 +215,13 @@ private func channelDiscussionEntries(state: DiscussionState, arguments: Discuss
             }
             
         } else {
-            let text = L10n.discussionControllerChannelEmptyHeader
+            let text = L10n.discussionControllerChannelEmptyHeader1
 
-            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_channel_header, equatable: InputDataEquatable(text), item: { initialSize, stableId in
+            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_channel_header, equatable: InputDataEquatable(text), comparable: nil, item: { initialSize, stableId in
                 
                 let attributedString = NSMutableAttributedString()
                 _ = attributedString.append(string: text, color: theme.colors.grayText, font: .normal(.text))
-                return DiscussionHeaderItem(initialSize, stableId: stableId, icon: generateDiscussIcon(), text: attributedString)
+                return AnimtedStickerHeaderItem(initialSize, stableId: stableId, context: arguments.context, sticker: LocalAnimatedSticker.discussion, text: attributedString)
             }))
             index += 1
             
@@ -232,7 +232,7 @@ private func channelDiscussionEntries(state: DiscussionState, arguments: Discuss
                 
                 let viewType: GeneralViewType = state.filteredPeers.isEmpty ? .singleItem : .firstItem
                 
-                entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_create_group, equatable: InputDataEquatable(viewType), item: { initialSize, stableId in
+                entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_create_group, equatable: InputDataEquatable(viewType), comparable: nil, item: { initialSize, stableId in
                     return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.discussionControllerChannelEmptyCreateGroup, nameStyle: blueActionButton, viewType: viewType, action: arguments.createGroup, thumb: GeneralThumbAdditional(thumb: theme.icons.peerInfoAddMember, textInset: 52, thumbInset: 5))
                 }))
                 index += 1
@@ -246,19 +246,22 @@ private func channelDiscussionEntries(state: DiscussionState, arguments: Discuss
         }
     case .group:
         if let associatedPeer = state.associatedPeer {
-            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_channel_header, equatable: nil, item: { initialSize, stableId in
+            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_channel_header, equatable: nil, comparable: nil, item: { initialSize, stableId in
                 
                 let attributedString = NSMutableAttributedString()
                 _ = attributedString.append(string: L10n.discussionControllerGroupSetHeader(associatedPeer.displayTitle), color: theme.colors.grayText, font: .normal(.text))
                 attributedString.detectBoldColorInString(with: .medium(.text))
                 
-                return DiscussionHeaderItem(initialSize, stableId: stableId, icon: generateDiscussIcon(), text: attributedString)
+                return AnimtedStickerHeaderItem(initialSize, stableId: stableId, context: arguments.context, sticker: LocalAnimatedSticker.discussion, text: attributedString)
             }))
             
             index += 1
             
+            entries.append(.sectionId(sectionId, type: .normal))
+            sectionId += 1
+            
             let status = associatedPeer.addressName != nil ? "@\(associatedPeer.addressName!)" : (associatedPeer.isSupergroup ? L10n.discussionControllerPrivateGroup : L10n.discussionControllerPrivateChannel)
-            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_peer_info(associatedPeer.id), equatable: InputDataEquatable(PeerEquatable(peer: associatedPeer)), item: { initialSize, stableId in
+            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_peer_info(associatedPeer.id), equatable: InputDataEquatable(PeerEquatable(peer: associatedPeer)), comparable: nil, item: { initialSize, stableId in
                 return ShortPeerRowItem(initialSize, peer: associatedPeer, account: arguments.context.account, status: status, inset: NSEdgeInsetsMake(0, 30, 0, 30), viewType: .singleItem, action: {
                     arguments.openInfo(associatedPeer.id)
                 })
@@ -276,7 +279,7 @@ private func channelDiscussionEntries(state: DiscussionState, arguments: Discuss
             })))
             index += 1
         } else {
-            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_group_header, equatable: nil, item: { initialSize, stableId in
+            entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_group_header, equatable: nil, comparable: nil, item: { initialSize, stableId in
                 
                 let attributedString = NSMutableAttributedString()
                 _ = attributedString.append(string: L10n.discussionControllerGroupUnsetDescription, color: theme.colors.grayText, font: .normal(.text))
@@ -425,7 +428,7 @@ func ChannelDiscussionSetupController(context: AccountContext, peer: Peer)-> Inp
         updateState { current in
             var current = current
             let peer = peerViewMainPeer(peerView)
-            if let cachedData = peerView.cachedData as? CachedChannelData, let linkedDiscussionPeerId = cachedData.linkedDiscussionPeerId {
+            if let cachedData = peerView.cachedData as? CachedChannelData, let linkedDiscussionPeerId = cachedData.linkedDiscussionPeerId.peerId {
                 current = current.withUpdatedassociatedPeer(peerView.peers[linkedDiscussionPeerId])
             } else {
                 current = current.withUpdatedassociatedPeer(nil)

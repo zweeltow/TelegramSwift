@@ -70,7 +70,7 @@ class ContextSearchMessageItem: GeneralRowItem {
             if let peer = messageMainPeer(message) as? TelegramChannel, case .broadcast(_) = peer.info {
                 nameColor = theme.chat.linkColor(true, false)
             } else if context.peerId != peer.id {
-                let value = abs(Int(peer.id.id) % 7)
+                let value = abs(Int(peer.id.id._internalGetInt32Value()) % 7)
                 nameColor = theme.chat.peerName(value)
             }
         }
@@ -90,7 +90,7 @@ class ContextSearchMessageItem: GeneralRowItem {
         
         
         self.messageLayout = TextViewLayout(messageTitle, maximumNumberOfLines: 1, truncationType: .end, strokeLinks: true)
-        let selectRange = messageTitle.string.nsstring.range(of: searchText)
+        let selectRange = messageTitle.string.lowercased().nsstring.range(of: searchText.lowercased())
         if selectRange.location != NSNotFound {
             self.messageLayout.additionalSelections = [TextSelectedRange(range: selectRange, color: theme.colors.accentIcon.withAlphaComponent(0.5), def: false)]
         }
@@ -111,7 +111,7 @@ class ContextSearchMessageItem: GeneralRowItem {
         dateLayout = TextNode.layoutText(maybeNode: nil,  date, nil, 1, .end, NSMakeSize( .greatestFiniteMagnitude, 20), nil, false, .left)
         dateSelectedLayout = TextNode.layoutText(maybeNode: nil,  date, nil, 1, .end, NSMakeSize( .greatestFiniteMagnitude, 20), nil, true, .left)
         
-        self.photo = .PeerAvatar(peer, peer.displayLetters, peer.smallProfileImage, message)
+        self.photo = .PeerAvatar(peer, peer.displayLetters, peer.smallProfileImage, message, nil)
         
         super.init(initialSize, height: 44, action: action)
 

@@ -104,6 +104,12 @@ class StickerSetTableRowView : TableRowView, ViewDisplayDelegate {
         
         containerView.set(handler: { control in
             if let event = NSApp.currentEvent {
+                control.superview?.mouseDragged(with: event)
+            }
+        }, for: .MouseDragging)
+        
+        containerView.set(handler: { control in
+            if let event = NSApp.currentEvent {
                 control.superview?.mouseUp(with: event)
             }
         }, for: .Up)
@@ -222,7 +228,7 @@ class StickerSetTableRowView : TableRowView, ViewDisplayDelegate {
                 
                 var file: TelegramMediaFile?
                 if let thumbnail = item.info.thumbnail {
-                    file = TelegramMediaFile(fileId: MediaId(namespace: 0, id: item.info.id.id), partialReference: nil, resource: thumbnail.resource, previewRepresentations: [thumbnail], immediateThumbnailData: nil, mimeType: "application/x-tgsticker", size: nil, attributes: [.FileName(fileName: "sticker.tgs"), .Sticker(displayText: "", packReference: .id(id: item.info.id.id, accessHash: item.info.accessHash), maskData: nil)])
+                    file = TelegramMediaFile(fileId: MediaId(namespace: 0, id: item.info.id.id), partialReference: nil, resource: thumbnail.resource, previewRepresentations: [thumbnail], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "application/x-tgsticker", size: nil, attributes: [.FileName(fileName: "sticker.tgs"), .Sticker(displayText: "", packReference: .id(id: item.info.id.id, accessHash: item.info.accessHash), maskData: nil)])
                 } else if let item = item.topItem {
                     file = item.file
                 }
@@ -245,8 +251,8 @@ class StickerSetTableRowView : TableRowView, ViewDisplayDelegate {
                     resourceReference = MediaResourceReference.stickerPackThumbnail(stickerPack: .id(id: item.info.id.id, accessHash: item.info.accessHash), resource: thumbnail.resource)
                 } else if let topItem = item.topItem {
                     let dimensions = topItem.file.dimensions?.size ?? NSMakeSize(35, 35)
-                    thumbnailItem = TelegramMediaImageRepresentation(dimensions: PixelDimensions(dimensions), resource: topItem.file.resource)
-                    resourceReference = MediaResourceReference.media(media: .stickerPack(stickerPack: StickerPackReference.id(id: item.info.id.id, accessHash: item.info.accessHash), media: topItem.file), resource: topItem.file.resource)
+                    thumbnailItem = TelegramMediaImageRepresentation(dimensions: PixelDimensions(dimensions), resource: topItem.file.resource, progressiveSizes: [], immediateThumbnailData: nil)
+                    resourceReference = MediaResourceReference.media(media: .stickerPack(stickerPack: .id(id: item.info.id.id, accessHash: item.info.accessHash), media: topItem.file), resource: topItem.file.resource)
                 }
                 if let thumbnailItem = thumbnailItem {
                     imageView.setSignal(chatMessageStickerPackThumbnail(postbox: item.context.account.postbox, representation: thumbnailItem, scale: backingScaleFactor, synchronousLoad: false))

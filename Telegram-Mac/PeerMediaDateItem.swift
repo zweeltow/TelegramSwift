@@ -24,7 +24,7 @@ class PeerMediaDateItem: TableStickItem {
         self.messageIndex = index
         self._stableId = stableId
         self.viewType = .modern(position: .single, insets: NSEdgeInsetsMake(3, 0, 3, 0))
-        self.inset = NSEdgeInsets(left: 30, right: 30)
+        self.inset = NSEdgeInsets(left: 0, right: 0)
         let timestamp = index.timestamp
         
         let nowTimestamp = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
@@ -38,7 +38,7 @@ class PeerMediaDateItem: TableStickItem {
         localtime_r(&now, &timeinfoNow)
         
         let text: String
-        let dateFormatter = DateFormatter()
+        let dateFormatter = makeNewDateFormatter()
         dateFormatter.timeZone = NSTimeZone.local
         dateFormatter.dateFormat = "MMMM yyyy";
         text = dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(timestamp))).uppercased()

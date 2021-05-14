@@ -82,7 +82,7 @@ class GlobalBadgeNode: Node {
     
     private let getColor: (Bool) -> NSColor
     
-    init(_ account: Account, sharedContext: SharedAccountContext, dockTile: Bool = false, collectAllAccounts: Bool = false, excludePeerId:PeerId? = nil, excludeGroupId: PeerGroupId? = nil, view: View? = nil, layoutChanged:(()->Void)? = nil, getColor: @escaping(Bool) -> NSColor = { _ in return theme.colors.redUI }, fontSize: CGFloat = .small, applyFilter: Bool = true, filter: ChatListFilter? = nil) {
+    init(_ account: Account, sharedContext: SharedAccountContext, dockTile: Bool = false, collectAllAccounts: Bool = false, excludePeerId:PeerId? = nil, excludeGroupId: PeerGroupId? = nil, view: View? = nil, layoutChanged:(()->Void)? = nil, getColor: @escaping(Bool) -> NSColor = { _ in return theme.colors.redUI }, fontSize: CGFloat = .small, applyFilter: Bool = true, filter: ChatListFilter? = nil, removeWhenSidebar: Bool = false) {
         self.account = account
         self.excludePeerId = excludePeerId
         self.layoutChanged = layoutChanged
@@ -93,6 +93,10 @@ class GlobalBadgeNode: Node {
         struct Result : Equatable {
             let dockText: String?
             let total:Int32
+            init(dockText: String?, total: Int32) {
+                self.dockText = dockText
+                self.total = max(total, 0)
+            }
         }
         
         var items:[UnreadMessageCountsItem] = []
@@ -126,7 +130,7 @@ class GlobalBadgeNode: Node {
         let unreadKey: PostboxViewKey
         unreadKey = .unreadCounts(items: [])
         
-        let s:Signal<Result, NoError>
+        var s:Signal<Result, NoError>
         
         if let filter = filter {
             s = chatListFilterItems(account: account, accountManager: sharedContext.accountManager) |> map { value in
@@ -145,7 +149,7 @@ class GlobalBadgeNode: Node {
                     var dockText: String?
                     let totalValue = !inAppSettings.badgeEnabled  ? 0 : (collectAllAccounts && !inAppSettings.notifyAllAccounts ? 0 : max(0, counts.reduce(0, { $0 + $1.0 })))
                     if totalValue > 0 {
-                        dockText = "\(totalValue)"
+                        dockText = "\(max(0, totalValue))"
                     }
                     
                     excludeTotal = totalValue
@@ -177,6 +181,9 @@ class GlobalBadgeNode: Node {
             } |> deliverOnMainQueue
         }
         
+        s = combineLatest(s, chatListFolderSettings(account.postbox)) |> map {
+            return Result(dockText: $0.dockText, total: $1.sidebar && removeWhenSidebar ? 0 : $0.total)
+        } |> deliverOnMainQueue
         
         self.disposable.set(s.start(next: { [weak self] result in
             if let strongSelf = self {
@@ -224,6 +231,9 @@ func forceUpdateStatusBarIconByDockTile(sharedContext: SharedAccountContext) {
             if systemAppearance.name != .aqua {
                 color = .white
             }
+        }
+        if #available(OSX 11.0, *) {
+            color = .white
         }
         resourcesQueue.async {
             let icon = generateStatusBarIcon(count, color: color)

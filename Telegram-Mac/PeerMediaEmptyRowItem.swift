@@ -21,7 +21,7 @@ class PeerMediaEmptyRowItem: TableRowItem {
         let attr:NSAttributedString
         if tags.contains(.file) {
             image = theme.icons.mediaEmptyFiles
-            attr = .initialize(string: tr(L10n.peerMediaSharedFilesEmptyList), color: theme.colors.grayText, font: .normal(.header))
+            attr = .initialize(string: tr(L10n.peerMediaSharedFilesEmptyList1), color: theme.colors.grayText, font: .normal(.header))
         } else if tags.contains(.music) || tags.contains(.voiceOrInstantVideo) {
             image = theme.icons.mediaEmptyMusic
             attr = .initialize(string: tags.contains(.voiceOrInstantVideo) ? L10n.peerMediaSharedVoiceEmptyList : L10n.peerMediaSharedMusicEmptyList, color: theme.colors.grayText, font: .normal(.header))
@@ -75,7 +75,7 @@ class PeerMediaEmptyRowView : TableRowView {
     override func layout() {
         super.layout()
         if let item = item as? PeerMediaEmptyRowItem {
-            imageView.centerX(y: bounds.midY - imageView.frame.height - 40)
+            imageView.centerX(y: bounds.midY - imageView.frame.height)
             item.textLayout.measure(width: frame.width - 60)
             textView.update(item.textLayout)
             textView.centerX(y: imageView.frame.maxY + 16)

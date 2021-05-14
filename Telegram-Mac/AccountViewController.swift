@@ -130,6 +130,7 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
     case appearance(index: Int)
     case privacy(index: Int, AccountPrivacySettings?, ([WebAuthorization], [PeerId : Peer])?)
     case dataAndStorage(index: Int)
+    case activeSessions(index: Int, activeSessions: Int)
     case passport(index: Int, peer: Peer)
     case wallet(index: Int)
     case update(index: Int, state: Any)
@@ -156,30 +157,32 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
             return .index(4)
         case .dataAndStorage:
             return .index(5)
-        case .privacy:
+        case .activeSessions:
             return .index(6)
-        case .language:
+        case .privacy:
             return .index(7)
-        case .stickers:
+        case .language:
             return .index(8)
-        case .filters:
+        case .stickers:
             return .index(9)
-        case .update:
+        case .filters:
             return .index(10)
-        case .appearance:
+        case .update:
             return .index(11)
-        case .passport:
+        case .appearance:
             return .index(12)
-        case .wallet:
+        case .passport:
             return .index(13)
-        case .readArticles:
+        case .wallet:
             return .index(14)
-        case .about:
+        case .readArticles:
             return .index(15)
-        case .faq:
+        case .about:
             return .index(16)
-        case .ask:
+        case .faq:
             return .index(17)
+        case .ask:
+            return .index(18)
         case let .whiteSpace(index, _):
             return .index(1000 + index)
         }
@@ -208,6 +211,8 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
         case let .privacy(index, _, _):
             return index
         case let .dataAndStorage(index):
+            return index
+        case let .activeSessions(index, _):
             return index
         case let .about(index):
             return index
@@ -305,6 +310,12 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
             } else {
                 return false
             }
+        case let .activeSessions(index, activeSessions):
+            if case .activeSessions(index, activeSessions) = rhs {
+                return true
+            } else {
+                return false
+            }
         case let .about(lhsIndex):
             if case let .about(rhsIndex) = rhs {
                 return lhsIndex == rhsIndex
@@ -384,13 +395,13 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
             })
         case let .accountRecord(_, info):
             return ShortPeerRowItem(initialSize, peer: info.peer, account: info.account, height: 42, photoSize: NSMakeSize(28, 28), titleStyle: ControlStyle(font: .normal(.title), foregroundColor: theme.colors.text, highlightColor: theme.colors.underSelectedColor), borderType: [.Right], inset: NSEdgeInsets(left:16), action: {
-                arguments.context.sharedContext.switchToAccount(id: info.account.id, action: .settings)
+                arguments.context.sharedContext.switchToAccount(id: info.account.id, action: nil)
             }, contextMenuItems: {
-                return [ContextMenuItem(L10n.accountSettingsDeleteAccount, handler: {
+                return .single([ContextMenuItem(L10n.accountSettingsDeleteAccount, handler: {
                     confirm(for: arguments.context.window, information: L10n.accountConfirmLogoutText, successHandler: { _ in
                         _ = logoutFromAccount(id: info.account.id, accountManager: arguments.context.sharedContext.accountManager, alreadyLoggedOutRemotely: false).start()
                     })
-                })]
+                })])
             }, alwaysHighlight: true, badgeNode: GlobalBadgeNode(info.account, sharedContext: arguments.context.sharedContext, getColor: { _ in theme.colors.accent }), compactText: true)
         case .addAccount:
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.accountSettingsAddAccount, nameStyle: ControlStyle(font: .normal(.title), foregroundColor: theme.colors.accentIcon), type: .none, action: {
@@ -442,6 +453,10 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.accountSettingsDataAndStorage, icon: theme.icons.settingsStorage, activeIcon: theme.icons.settingsStorageActive, type: .next, action: {
                 arguments.presentController(DataAndStorageViewController(arguments.context), true)
             }, border:[BorderType.Right], inset:NSEdgeInsets(left:16))
+        case let .activeSessions(_, count):
+            return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.privacySettingsActiveSessions, icon: theme.icons.settingsSessions, activeIcon: theme.icons.settingsSessionsActive, type: .nextContext("\(count)"), action: {
+                arguments.presentController(RecentSessionsController(arguments.context), true)
+            }, border:[BorderType.Right], inset:NSEdgeInsets(left:16))
         case .about:
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.accountSettingsAbout, icon: theme.icons.settingsFaq, activeIcon: theme.icons.settingsFaqActive, type: .next, action: {
                 showModal(with: AboutModalController(), for: mainWindow)
@@ -453,27 +468,6 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
         case .wallet:
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.accountSettingsWallet, icon: theme.icons.settingsWallet, activeIcon: theme.icons.settingsWalletActive, type: .next, action: {
                 let context = arguments.context
-//                if #available(OSX 10.12, *) {
-//
-//                    let _ = combineLatest(queue: .mainQueue(), walletConfiguration(postbox: context.account.postbox), TONKeychain.hasKeys(for: context.account)).start(next: { configuration, hasKeys in
-//                        if let config = configuration.config, let blockchainName = configuration.blockchainName {
-//                            let tonContext = context.tonContext.context(config: config, blockchainName: blockchainName, enableProxy: !configuration.disableProxy)
-//                            if hasKeys {
-//                                let signal = tonContext.storage.getWalletRecords() |> deliverOnMainQueue
-//                                _ = signal.start(next: { wallets in
-//                                    if wallets.isEmpty {
-//                                        arguments.presentController(WalletSplashController(context: context, tonContext: tonContext, mode: .intro), true)
-//                                    } else {
-//                                        arguments.presentController(WalletInfoController(context: context, tonContext: tonContext, walletInfo: wallets[0].info), true)
-//                                    }
-//                                })
-//                            } else {
-//                                arguments.presentController(WalletSplashController(context: context, tonContext: tonContext, mode: .unavailable), true)
-//                            }
-//                        }
-//                    })
-//                }
-                
             }, border:[BorderType.Right], inset:NSEdgeInsets(left:16))
         case .faq:
             return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.accountSettingsFAQ, icon: theme.icons.settingsFaq, activeIcon: theme.icons.settingsFaqActive, type: .next, action: {
@@ -491,7 +485,8 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
                 confirm(for: mainWindow, information: L10n.accountConfirmAskQuestion, thridTitle: L10n.accountConfirmGoToFaq, successHandler: {  result in
                     switch result {
                     case .basic:
-                        _ = showModalProgress(signal: supportPeerId(account: arguments.context.account), for: mainWindow).start(next: {  peerId in
+                        
+                        _ = showModalProgress(signal: arguments.context.engine.peerNames.supportPeerId(), for: mainWindow).start(next: {  peerId in
                             if let peerId = peerId {
                                 arguments.presentController(ChatController(context: arguments.context, chatLocation: .peer(peerId)), true)
                             }
@@ -538,7 +533,7 @@ private enum AccountInfoEntry : TableItemListNodeEntry {
 }
 
 
-private func accountInfoEntries(peerView:PeerView, accounts: [AccountWithInfo], language: TelegramLocalization, privacySettings: AccountPrivacySettings?, webSessions: ([WebAuthorization], [PeerId : Peer])?, proxySettings: (ProxySettings, ConnectionStatus), passportVisible: Bool, appUpdateState: Any?, hasWallet: Bool, hasFilters: Bool) -> [AccountInfoEntry] {
+private func accountInfoEntries(peerView:PeerView, context: AccountContext, accounts: [AccountWithInfo], language: TelegramLocalization, privacySettings: AccountPrivacySettings?, webSessions: ([WebAuthorization], [PeerId : Peer])?, proxySettings: (ProxySettings, ConnectionStatus), passportVisible: Bool, appUpdateState: Any?, hasWallet: Bool, hasFilters: Bool, sessionsCount: Int) -> [AccountInfoEntry] {
     var entries:[AccountInfoEntry] = []
     
     var index:Int = 0
@@ -552,7 +547,7 @@ private func accountInfoEntries(peerView:PeerView, accounts: [AccountWithInfo], 
     index += 1
     
     for account in accounts {
-        if account.peer.id != peerView.peerId {
+        if account.account.id != context.account.id {
             entries.append(.accountRecord(index: index, info: account))
             index += 1
         }
@@ -587,6 +582,8 @@ private func accountInfoEntries(peerView:PeerView, accounts: [AccountWithInfo], 
     index += 1
     entries.append(.dataAndStorage(index: index))
     index += 1
+    entries.append(.activeSessions(index: index, activeSessions: sessionsCount))
+    index += 1
     entries.append(.appearance(index: index))
     index += 1
     entries.append(.language(index: index, current: language.localizedName))
@@ -612,12 +609,6 @@ private func accountInfoEntries(peerView:PeerView, accounts: [AccountWithInfo], 
         entries.append(.passport(index: index, peer: peer))
         index += 1
     }
-//    if hasWallet {
-//        entries.append(.wallet(index: index))
-//        index += 1
-//    }
-    
-
 
     entries.append(.whiteSpace(index: index, height: 20))
     index += 1
@@ -772,7 +763,7 @@ class LayoutAccountController : TableViewController {
        // self.rightBarView.border = [.Right]
         let context = self.context
         genericView.getBackgroundColor = {
-            return .clear//            theme.colors.background
+            return .clear
         }
         
         settings.set(combineLatest(Signal<AccountPrivacySettings?, NoError>.single(nil) |> then(requestAccountPrivacySettings(account: context.account) |> map {Optional($0)}), Signal<([WebAuthorization], [PeerId : Peer])?, NoError>.single(nil) |> then(webSessions(network: context.account.network) |> map {Optional($0)}), proxySettings(accountManager: context.sharedContext.accountManager) |> mapToSignal { settings in
@@ -837,8 +828,12 @@ class LayoutAccountController : TableViewController {
         #endif
         
         
-        let apply = combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(context.account.peerId), context.sharedContext.activeAccountsWithInfo, appearanceSignal, settings.get(), appUpdateState, hasWallet.get(), hasFilters.get()) |> map { peerView, accounts, appearance, settings, appUpdateState, hasWallet, hasFilters -> TableUpdateTransition in
-            let entries = accountInfoEntries(peerView: peerView, accounts: accounts.accounts, language: appearance.language, privacySettings: settings.0, webSessions: settings.1, proxySettings: settings.2, passportVisible: settings.3, appUpdateState: appUpdateState, hasWallet: hasWallet, hasFilters: hasFilters).map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}
+        let sessionsCount = context.activeSessionsContext.state |> map {
+            $0.sessions.count
+        }
+        
+        let apply = combineLatest(queue: prepareQueue, context.account.viewTracker.peerView(context.account.peerId), context.sharedContext.activeAccountsWithInfo, appearanceSignal, settings.get(), appUpdateState, hasWallet.get(), hasFilters.get(), sessionsCount) |> map { peerView, accounts, appearance, settings, appUpdateState, hasWallet, hasFilters, sessionsCount -> TableUpdateTransition in
+            let entries = accountInfoEntries(peerView: peerView, context: context, accounts: accounts.accounts, language: appearance.language, privacySettings: settings.0, webSessions: settings.1, proxySettings: settings.2, passportVisible: settings.3, appUpdateState: appUpdateState, hasWallet: hasWallet, hasFilters: hasFilters, sessionsCount: sessionsCount).map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}
             var size = atomicSize.modify {$0}
             size.width = max(size.width, 280)
             return prepareEntries(left: previous.swap(entries), right: entries, arguments: arguments, initialSize: size)
@@ -860,23 +855,28 @@ class LayoutAccountController : TableViewController {
                     _ = genericView.select(item: item)
                 }
             } else if navigation.controller is PrivacyAndSecurityViewController {
-                if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(6))) {
-                    _ = genericView.select(item: item)
-                }
-            } else if navigation.controller is LanguageViewController {
                 if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(7))) {
                     _ = genericView.select(item: item)
                 }
-            } else if navigation.controller is InstalledStickerPacksController {
+            } else if navigation.controller is LanguageViewController {
                 if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(8))) {
                     _ = genericView.select(item: item)
                 }
+            } else if navigation.controller is InstalledStickerPacksController {
+                if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(9))) {
+                    _ = genericView.select(item: item)
+                }
+                
             } else if navigation.controller is GeneralSettingsViewController {
                 if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(2))) {
                     _ = genericView.select(item: item)
                 }
+            }  else if navigation.controller is RecentSessionsController {
+                if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(6))) {
+                    _ = genericView.select(item: item)
+                }
             } else if navigation.controller is PassportController {
-                if let item = genericView.item(stableId: AccountInfoEntryId.index(Int(12))) {
+                if let item = genericView.item(stableId: AccountInfoEntryId.index(Int(13))) {
                     _ = genericView.select(item: item)
                 }
             } else if let controller = navigation.controller as? InputDataController {
@@ -890,15 +890,15 @@ class LayoutAccountController : TableViewController {
                         _ = genericView.select(item: item)
                     }
                 case controller.identifier == "passport":
-                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(12))) {
+                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(13))) {
                         _ = genericView.select(item: item)
                     }
                 case controller.identifier == "app_update":
-                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(10))) {
+                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(11))) {
                         _ = genericView.select(item: item)
                     }
                 case controller.identifier == "filters":
-                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(9))) {
+                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(10))) {
                         _ = genericView.select(item: item)
                     }
                 case controller.identifier == "notification-settings":
@@ -906,13 +906,9 @@ class LayoutAccountController : TableViewController {
                         _ = genericView.select(item: item)
                     }
                 case controller.identifier == "app_appearance":
-                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(11))) {
+                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(12))) {
                         _ = genericView.select(item: item)
                     }
-//                case controller.identifier == "wallet-info" || controller.identifier == "wallet-create" || controller.identifier == "wallet-splash":
-//                    if let item = genericView.item(stableId: AnyHashable(AccountInfoEntryId.index(12))) {
-//                        _ = genericView.select(item: item)
-//                    }
                 default:
                     genericView.cancelSelection()
                 }
@@ -936,7 +932,7 @@ class LayoutAccountController : TableViewController {
         updateLocalizationAndTheme(theme: theme)
         
         
-        context.window.set(handler: { [weak self] in
+        context.window.set(handler: { [weak self] _ in
             if let strongSelf = self {
                 return strongSelf.escapeKeyAction()
             }
@@ -952,6 +948,8 @@ class LayoutAccountController : TableViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         let context = self.context
+        
+        
         
         
         settings.set(combineLatest(Signal<AccountPrivacySettings?, NoError>.single(nil) |> then(requestAccountPrivacySettings(account: context.account) |> map {Optional($0)}), Signal<([WebAuthorization], [PeerId : Peer])?, NoError>.single(nil) |> then(webSessions(network: context.account.network) |> map {Optional($0)}), proxySettings(accountManager: context.sharedContext.accountManager) |> mapToSignal { settings in

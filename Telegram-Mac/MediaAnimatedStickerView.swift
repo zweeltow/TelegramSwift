@@ -22,6 +22,8 @@ class MediaAnimatedStickerView: ChatMediaContentView {
     private let fetchDisposable = MetaDisposable()
     private let playThrottleDisposable = MetaDisposable()
     private let playerView: LottiePlayerView = LottiePlayerView(frame: NSMakeRect(0, 0, 240, 240))
+    private var placeholderView: StickerShimmerEffectView?
+
     private let thumbView = TransformImageView()
     private var sticker:LottieAnimation? = nil {
         didSet {
@@ -73,11 +75,15 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         
         let parameters = self.parameters as? ChatAnimatedStickerMediaLayoutParameters
         
-        accept = parameters?.alwaysAccept ?? accept
+        accept = parameters?.alwaysAccept ?? accept 
+        
+        if NSIsEmptyRect(self.visibleRect) || self.window == nil {
+            accept = false
+        }
         
         var signal = Signal<Void, NoError>.single(Void())
-        if accept && !nextForceAccept {
-            signal = signal |> delay(accept ? 0.25 : 0, queue: .mainQueue())
+        if accept && !nextForceAccept && self.sticker != nil {
+            signal = signal |> delay(accept ? 0.1 : 0, queue: .mainQueue())
         }
         if accept && self.sticker != nil {
             nextForceAccept = false
@@ -85,13 +91,12 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         
         if let sticker = self.sticker, previousAccept {
             switch sticker.playPolicy {
-            case .once:
+            case .once, .onceEnd:
                 return
             default:
                 break
             }
         }
-       
         if previousAccept != accept {
             self.playThrottleDisposable.set(signal.start(next: { [weak self] in
                 guard let `self` = self else {
@@ -106,6 +111,10 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         
     }
     
+    func setColors(_ colors: [LottieColor]) {
+        self.playerView.setColors(colors)
+    }
+    
     private var nextForceAccept: Bool = false
 
     
@@ -115,13 +124,13 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         }
         return true
     }
-    
     override func executeInteraction(_ isControl: Bool) {
         if let window = window as? Window {
             if let context = context, let peerId = parent?.id.peerId, let media = media as? TelegramMediaFile, !media.isEmojiAnimatedSticker, let reference = media.stickerReference {
                 showModal(with:StickerPackPreviewModalController(context, peerId: peerId, reference: reference), for:window)
             } else {
-                self.playerView.playIfNeeded()
+                self.playerView.playIfNeeded(true)
+                
             }
         }
     }
@@ -135,10 +144,13 @@ class MediaAnimatedStickerView: ChatMediaContentView {
     
     func updateListeners() {
         if let window = window {
+            
             NotificationCenter.default.removeObserver(self)
             NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSWindow.didBecomeKeyNotification, object: window)
             NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSWindow.didResignKeyNotification, object: window)
             NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSView.boundsDidChangeNotification, object: self.enclosingScrollView?.contentView)
+            NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSView.frameDidChangeNotification, object: self.enclosingScrollView?.documentView)
+
         } else {
             removeNotificationListeners()
         }
@@ -172,29 +184,34 @@ class MediaAnimatedStickerView: ChatMediaContentView {
 
         let updated = self.media != nil ? !file.isSemanticallyEqual(to: self.media!) : true
         
+        
         if parent?.stableId != self.parent?.stableId {
             self.sticker = nil
         } else if parent == nil, updated {
             self.sticker = nil
         }
-        self.nextForceAccept = approximateSynchronousValue || parent?.id.namespace == Namespaces.Message.Local
 
         
+        self.nextForceAccept = approximateSynchronousValue || parent?.id.namespace == Namespaces.Message.Local
+
         super.update(with: media, size: size, context: context, parent: parent, table: table, parameters: parameters, animated: animated, positionFlags: positionFlags, approximateSynchronousValue: approximateSynchronousValue)
-     
         
-        let reference: MediaResourceReference
-        
+        let reference: FileMediaReference
+        let mediaResource: MediaResourceReference
         if let message = parent {
-            reference = FileMediaReference.message(message: MessageReference(message), media: file).resourceReference(file.resource)
+            reference = FileMediaReference.message(message: MessageReference(message), media: file)
+            mediaResource = reference.resourceReference(file.resource)
         } else if let stickerReference = file.stickerReference {
             if file.resource is CloudStickerPackThumbnailMediaResource {
-                reference = MediaResourceReference.stickerPackThumbnail(stickerPack: stickerReference, resource: file.resource)
+                reference = FileMediaReference.stickerPack(stickerPack: stickerReference, media: file)
+                mediaResource = MediaResourceReference.stickerPackThumbnail(stickerPack: stickerReference, resource: file.resource)
             } else {
-                reference = FileMediaReference.stickerPack(stickerPack: stickerReference, media: file).resourceReference(file.resource)
+                reference = FileMediaReference.stickerPack(stickerPack: stickerReference, media: file)
+                mediaResource = reference.resourceReference(file.resource)
             }
         } else {
-            reference = FileMediaReference.standalone(media: file).resourceReference(file.resource)
+            reference = FileMediaReference.standalone(media: file)
+            mediaResource = reference.resourceReference(file.resource)
         }
         
         let data: Signal<MediaResourceData, NoError>
@@ -211,7 +228,6 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         }
         
         self.loadResourceDisposable.set((data |> map { resourceData -> Data? in
-            
             if resourceData.complete, let data = try? Data(contentsOf: URL(fileURLWithPath: resourceData.path), options: [.mappedIfSafe]) {
                 return data
             }
@@ -220,11 +236,25 @@ class MediaAnimatedStickerView: ChatMediaContentView {
             if let data = data, let file = file, let `self` = self {
                 let parameters = parameters as? ChatAnimatedStickerMediaLayoutParameters
                 let playPolicy: LottiePlayPolicy = parameters?.playPolicy ?? (file.isEmojiAnimatedSticker || !self.chatLoopAnimated ? (self.parameters == nil ? .framesCount(1) : .once) : .loop)
-                                
+                var soundEffect: LottieSoundEffect? = nil
+                if file.isEmojiAnimatedSticker, let emoji = file.stickerText {
+                    let emojies = EmojiesSoundConfiguration.with(appConfiguration: context.appConfiguration)
+                    if let file = emojies.sounds[emoji] {
+                        soundEffect = LottieSoundEffect(file: file, postbox: context.account.postbox, triggerOn: 1)
+                    }
+                }
                 let maximumFps: Int = size.width < 200 && !file.isEmojiAnimatedSticker ? size.width <= 30 ? 24 : 30 : 60
                 let cache: ASCachePurpose = parameters?.cache ?? (size.width < 200 && size.width > 30 ? .temporaryLZ4(.thumb) : self.parent != nil ? .temporaryLZ4(.chat) : .none)
                 let fitzModifier = file.animatedEmojiFitzModifier
-                self.sticker = LottieAnimation(compressed: data, key: LottieAnimationEntryKey(key: .media(file.id), size: size, fitzModifier: fitzModifier), cachePurpose: cache, playPolicy: playPolicy, maximumFps: maximumFps, postbox: self.context?.account.postbox)
+                
+                let type: LottieAnimationType
+                if file.mimeType == "image/webp" {
+                    type = .webp
+                } else {
+                    type = .lottie
+                }
+                self.sticker = LottieAnimation(compressed: data, key: LottieAnimationEntryKey(key: .media(file.id), size: size, fitzModifier: fitzModifier), type: type, cachePurpose: cache, playPolicy: playPolicy, maximumFps: maximumFps, colors: parameters?.colors ?? [], soundEffect: soundEffect, postbox: self.context?.account.postbox)
+                
                 self.fetchStatus = .Local
             } else {
                 self?.sticker = nil
@@ -235,30 +265,96 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: size, boundingSize: size, intrinsicInsets: NSEdgeInsets())
         
         
+        
+       
+        
         self.thumbView.setSignal(signal: cachedMedia(media: file, arguments: arguments, scale: backingScaleFactor), clearInstantly: updated)
+        
+        let hasPlaceholder = (parent == nil || file.immediateThumbnailData != nil) && self.thumbView.image == nil && size.height >= 40
+        if updated {
+            if hasPlaceholder {
+                let current: StickerShimmerEffectView
+                if let local = self.placeholderView {
+                    current = local
+                } else {
+                    current = StickerShimmerEffectView()
+                    current.frame = bounds
+                    self.placeholderView = current
+                    addSubview(current, positioned: .below, relativeTo: playerView)
+                    if animated {
+                        current.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
+                    }
+                }
+                current.update(backgroundColor: nil, foregroundColor: NSColor(rgb: 0x748391, alpha: 0.2), shimmeringColor: NSColor(rgb: 0x748391, alpha: 0.35), data: file.immediateThumbnailData, size: size)
+                current.updateAbsoluteRect(bounds, within: size)
+            } else {
+                self.removePlaceholder(animated: animated)
+            }
+        }
+        
+        self.thumbView.imageUpdated = { [weak self] value in
+            if value != nil {
+                self?.removePlaceholder(animated: animated)
+            }
+        }
+        
+                
+        
         if !self.thumbView.isFullyLoaded {
-            self.thumbView.setSignal(chatMessageAnimatedSticker(postbox: context.account.postbox, file: file, small: false, scale: backingScaleFactor, size: size, fetched: false), cacheImage: { [weak file] result in
+            
+            let signal: Signal<ImageDataTransformation, NoError>
+                
+            switch file.mimeType {
+            case "image/webp":
+                signal = chatMessageSticker(postbox: context.account.postbox, file: reference, small: size.width < 120, scale: backingScaleFactor, fetched: true)
+            default:
+                signal = chatMessageAnimatedSticker(postbox: context.account.postbox, file: reference, small: false, scale: backingScaleFactor, size: size, fetched: true)
+            }
+            self.thumbView.setSignal(signal, cacheImage: { [weak file, weak self] result in
                 if let file = file {
                     cacheMedia(result, media: file, arguments: arguments, scale: System.backingScale)
                 }
+                self?.removePlaceholder(animated: false)
             })
-            self.thumbView.set(arguments: arguments)
-        } else {
-            self.thumbView.dispose()
+        }
+        self.thumbView.set(arguments: arguments)
+        if updated {
+            self.playerView.removeFromSuperview()
+            addSubview(self.thumbView)
         }
 
-        fetchDisposable.set(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, reference: reference).start())
-        stateDisposable.set((self.playerView.state |> deliverOnMainQueue).start(next: { [weak self] state in
-            guard let `self` = self else { return }
-            switch state {
-            case .playing:
-                self.playerView.isHidden = false
-                self.thumbView.isHidden = true
-            default:
-                self.playerView.isHidden = true
-                self.thumbView.isHidden = false
+        
+        fetchDisposable.set(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, reference: mediaResource).start())
+        if updated {
+            stateDisposable.set((self.playerView.state |> deliverOnMainQueue).start(next: { [weak self] state in
+                guard let `self` = self else { return }
+                switch state {
+                case .playing:
+                    self.addSubview(self.playerView)
+                    self.thumbView.removeFromSuperview()
+                    self.removePlaceholder(animated: false)
+                case .stoped:
+                    self.playerView.removeFromSuperview()
+                    self.addSubview(self.thumbView)
+                default:
+                    break
+                }
+            }))
+        }
+        
+    }
+    
+    private func removePlaceholder(animated: Bool) {
+        if let placeholderView = self.placeholderView {
+            if animated {
+                placeholderView.layer?.animateAlpha(from: 1, to: 0, duration: 0.2, removeOnCompletion: false, completion: { [weak placeholderView] _ in
+                    placeholderView?.removeFromSuperview()
+                })
+            } else {
+                placeholderView.removeFromSuperview()
             }
-        }))
+            self.placeholderView = nil
+        }
     }
     
     override var contents: Any? {
@@ -269,6 +365,7 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         super.layout()
         self.playerView.frame = bounds
         self.thumbView.frame = bounds
+        self.placeholderView?.frame = bounds
     }
     
 }

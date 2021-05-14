@@ -25,7 +25,7 @@ class MGalleryPhotoItem: MGalleryItem {
                 if case let .Loaded(content) = webpage.content, let image = content.image {
                     self.media = image
                 } else if case let .Loaded(content) = webpage.content, let media = content.file  {
-                    let represenatation = TelegramMediaImageRepresentation(dimensions: media.dimensions ?? PixelDimensions(0, 0), resource: media.resource)
+                    let represenatation = TelegramMediaImageRepresentation(dimensions: media.dimensions ?? PixelDimensions(0, 0), resource: media.resource, progressiveSizes: [], immediateThumbnailData: nil)
                     var representations = media.previewRepresentations
                     representations.append(represenatation)
                     self.media = TelegramMediaImage(imageId: MediaId(namespace: 0, id: 0), representations: representations, immediateThumbnailData: nil, reference: nil, partialReference: nil, flags: [])
@@ -35,7 +35,7 @@ class MGalleryPhotoItem: MGalleryItem {
                 }
             } else {
                 if let media = entry.message!.media[0] as? TelegramMediaFile {
-                    let represenatation = TelegramMediaImageRepresentation(dimensions: media.dimensions ?? PixelDimensions(0, 0), resource: media.resource)
+                    let represenatation = TelegramMediaImageRepresentation(dimensions: media.dimensions ?? PixelDimensions(0, 0), resource: media.resource, progressiveSizes: [], immediateThumbnailData: nil)
                     var representations = media.previewRepresentations
                     representations.append(represenatation)
                     self.media = TelegramMediaImage(imageId: MediaId(namespace: 0, id: 0), representations: representations, immediateThumbnailData: nil, reference: nil, partialReference: nil, flags: [])
@@ -54,7 +54,7 @@ class MGalleryPhotoItem: MGalleryItem {
             fatalError("photo item not supported entry type")
         }
         
-        self.representation = media.representations.last!
+        self.representation = media.representationForDisplayAtSize(PixelDimensions(NSMakeSize(1280, 1280)))!
         super.init(context, entry, pagerSize)
     }
     
@@ -91,13 +91,17 @@ class MGalleryPhotoItem: MGalleryItem {
     private var hasRequested: Bool = false
     
     override func request(immediately: Bool) {
+        super.request(immediately: immediately)
+        
         if !hasRequested {
             let context = self.context
             let entry = self.entry
             let media = self.media
             let secureIdAccessContext = self.secureIdAccessContext
-            
-            let sizeValue = size.get() |> distinctUntilChanged(isEqual: { lhs, rhs -> Bool in
+                        
+            let sizeValue: Signal<NSSize, NoError> = size.get() |> map { size in
+                return NSMakeSize(floorToScreenPixels(System.backingScale, size.width), floorToScreenPixels(System.backingScale, size.height))
+            } |> distinctUntilChanged(isEqual: { lhs, rhs -> Bool in
                 return lhs == rhs
             })
             
@@ -106,7 +110,7 @@ class MGalleryPhotoItem: MGalleryItem {
             })
             
             
-            let result = combineLatest(sizeValue, rotateValue) |> mapToSignal { [weak self] size, orientation -> Signal<(NSSize, ImageOrientation?), NoError> in
+            let signal = combineLatest(sizeValue, rotateValue) |> mapToSignal { [weak self] size, orientation -> Signal<(NSSize, ImageOrientation?), NoError> in
                 guard let `self` = self else {return .complete()}
                 
                 var size = size
@@ -123,22 +127,47 @@ class MGalleryPhotoItem: MGalleryItem {
                 }
                 return .single((newSize, orientation))
                 
-            } |> mapToSignal { size, orientation -> Signal<(NSImage?, ImageOrientation?), NoError> in
-                    return chatGalleryPhoto(account: context.account, imageReference: entry.imageReference(media), scale: System.backingScale, secureIdAccessContext: secureIdAccessContext, synchronousLoad: true)
-                        |> map { transform in
-                            let image = transform(TransformImageArguments(corners: ImageCorners(), imageSize: size, boundingSize: size, intrinsicInsets: NSEdgeInsets()))
-                            if let orientation = orientation {
-                                let transformed = image?.createMatchingBackingDataWithImage(orienation: orientation)
-                                if let transformed = transformed {
-                                    return (NSImage(cgImage: transformed, size: transformed.size), orientation)
-                                }
+            }
+            
+            class Data {
+                let image: NSImage?
+                let orientation: ImageOrientation?
+                init(_ image: NSImage?, _ orientation: ImageOrientation?) {
+                    self.image = image
+                    self.orientation = orientation
+                }
+            }
+            
+            let result = combineLatest(signal, self.magnify.get() |> distinctUntilChanged) |> mapToSignal { [weak self] data, magnify -> Signal<Data, NoError> in
+                
+                let (size, orientation) = data
+                return chatGalleryPhoto(account: context.account, imageReference: entry.imageReference(media), scale: System.backingScale, secureIdAccessContext: secureIdAccessContext, synchronousLoad: true)
+                    |> map { [weak self] transform in
+                        
+                        var size = NSMakeSize(ceil(size.width * magnify), ceil(size.height * magnify))
+                        let image = transform(TransformImageArguments(corners: ImageCorners(), imageSize: size, boundingSize: size, intrinsicInsets: NSEdgeInsets()))
+                        
+                        if let image = image, orientation == nil {
+                            let newSize = image.size.aspectFitted(size)
+                            if newSize != size {
+                                size = newSize
+                                self?.modifiedSize = image.size
                             }
-                            if let image = image {
-                                return (NSImage(cgImage: image, size: image.size), orientation)
-                            } else {
-                                return (nil, orientation)
+                        }
+                        
+                        if let orientation = orientation {
+                            let transformed = image?.createMatchingBackingDataWithImage(orienation: orientation)
+                            if let transformed = transformed {
+                                return Data(NSImage(cgImage: transformed, size: size), orientation)
                             }
-                    }
+                        }
+                        if let image = image {
+                            return Data(NSImage(cgImage: image, size: size), orientation)
+                        } else {
+                            return Data(nil, orientation)
+                        }
+                }
+                
             }
             
             path.set(context.account.postbox.mediaBox.resourceData(representation.resource) |> mapToSignal { resource -> Signal<String, NoError> in
@@ -148,7 +177,7 @@ class MGalleryPhotoItem: MGalleryItem {
                 return .never()
             })
             
-            self.image.set(result |> map { .image($0.0, $0.1) } |> deliverOnMainQueue)
+            self.image.set(result |> map { GPreviewValueClass(.image($0.image, $0.orientation)) } |> deliverOnMainQueue)
             
             
             fetch()

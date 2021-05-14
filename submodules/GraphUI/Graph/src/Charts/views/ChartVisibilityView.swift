@@ -39,8 +39,13 @@ class ChartVisibilityView: View {
                 view.item = item
                 view.tapClosure = { [weak self] in
                     guard let self = self else { return }
-                    self.setItemSelected(!self.selectedItems[index], at: index, animated: true)
-                    self.notifyItemSelection()
+                    let selected = self.selectedItems.filter { $0 }
+                    if selected.count == 1, self.selectedItems[index] {
+                        self.selectionViews[index].shake()
+                    } else {
+                        self.setItemSelected(!self.selectedItems[index], at: index, animated: true)
+                        self.notifyItemSelection()
+                    }
                 }
                 
                 view.longTapClosure = { [weak self] in
@@ -119,7 +124,7 @@ class ChartVisibilityView: View {
 }
 
 extension ChartVisibilityView: ChartThemeContainer {
-    func apply(theme: ChartTheme, animated: Bool) {
+    func apply(theme: ChartTheme, strings: ChartStrings, animated: Bool) {
         View.perform(animated: animated) {
             self.backgroundColor = theme.chartBackgroundColor
           //  self.tintColor = theme.descriptionActionColor

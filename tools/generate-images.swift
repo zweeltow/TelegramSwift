@@ -21,6 +21,7 @@ func initialize() -> [String] {
     array.append("chatSearch")
     array.append("chatSearchActive")
     array.append("chatCall")
+    array.append("chatCallActive")
     array.append("chatActions")
     array.append("chatFailedCall_incoming")
     array.append("chatFailedCall_outgoing")
@@ -33,9 +34,11 @@ func initialize() -> [String] {
     array.append("chatFallbackCall")
     array.append("chatFallbackCallBubble_incoming")
     array.append("chatFallbackCallBubble_outgoing")
+    array.append("chatFallbackVideoCall")
+    array.append("chatFallbackVideoCallBubble_incoming")
+    array.append("chatFallbackVideoCallBubble_outgoing")
     array.append("chatToggleSelected")
     array.append("chatToggleUnselected")
-    array.append("chatShare")
     array.append("chatMusicPlay")
     array.append("chatMusicPlayBubble_incoming")
     array.append("chatMusicPlayBubble_outgoing")
@@ -81,16 +84,6 @@ func initialize() -> [String] {
     array.append("dismissAccessory")
     array.append("chatScrollUp")
     array.append("chatScrollUpActive")
-    array.append("audioPlayerPlay")
-    array.append("audioPlayerPause")
-    array.append("audioPlayerNext")
-    array.append("audioPlayerPrev")
-    array.append("auduiPlayerDismiss")
-    array.append("audioPlayerRepeat")
-    array.append("audioPlayerRepeatActive")
-    array.append("audioPlayerLockedPlay")
-    array.append("audioPlayerLockedNext")
-    array.append("audioPlayerLockedPrev")
     array.append("chatSendMessage")
     array.append("chatSaveEditedMessage")
     array.append("chatRecordVoice")
@@ -171,6 +164,7 @@ func initialize() -> [String] {
     array.append("chatFileThumbBubble_incoming")
     array.append("chatFileThumbBubble_outgoing")
     array.append("chatSecretThumb")
+    array.append("chatSecretThumbSmall")
     array.append("chatMapPin")
     array.append("chatSecretTitle")
     array.append("emptySearch")
@@ -189,9 +183,12 @@ func initialize() -> [String] {
     array.append("chatSearchCancel")
     array.append("chatSearchFrom")
     array.append("callWindowDecline")
+    array.append("callWindowDeclineSmall")
     array.append("callWindowAccept")
+    array.append("callWindowVideo")
+    array.append("callWindowVideoActive")
     array.append("callWindowMute")
-    array.append("callWindowUnmute")
+    array.append("callWindowMuteActive")
     array.append("callWindowClose")
     array.append("callWindowDeviceSettings")
     array.append("callSettings")
@@ -238,6 +235,7 @@ func initialize() -> [String] {
     array.append("settingsSecurity")
     array.append("settingsStickers")
     array.append("settingsStorage")
+    array.append("settingsSessions")
     array.append("settingsProxy")
     array.append("settingsAppearance")
     array.append("settingsPassport")
@@ -252,6 +250,7 @@ func initialize() -> [String] {
     array.append("settingsSecurityActive")
     array.append("settingsStickersActive")
     array.append("settingsStorageActive")
+    array.append("settingsSessionsActive")
     array.append("settingsProxyActive")
     array.append("settingsAppearanceActive")
     array.append("settingsPassportActive")
@@ -279,13 +278,10 @@ func initialize() -> [String] {
     array.append("previewSenderDelete")
     array.append("previewSenderDeleteFile")
     array.append("previewSenderArchive")
-    array.append("chatGoMessage")
     array.append("chatGroupToggleSelected")
     array.append("chatGroupToggleUnselected")
     array.append("successModalProgress")
     array.append("accentColorSelect")
-    array.append("chatShareWallpaper")
-    array.append("chatGotoMessageWallpaper")
     array.append("transparentBackground")
     array.append("lottieTransparentBackground")
     array.append("passcodeTouchId")
@@ -350,14 +346,10 @@ func initialize() -> [String] {
     array.append("galleryMore")
     array.append("galleryShare")
     array.append("galleryFastSave")
-    array.append("playingVoice1x")
-    array.append("playingVoice2x")
     array.append("galleryRotate")
     array.append("galleryZoomIn")
     array.append("galleryZoomOut")
     array.append("editMessageCurrentPhoto")
-    array.append("chatSwipeReply")
-    array.append("chatSwipeReplyWallpaper")
     array.append("videoPlayerPlay")
     array.append("videoPlayerPause")
     array.append("videoPlayerEnterFullScreen")
@@ -397,6 +389,9 @@ func initialize() -> [String] {
     array.append("scam")
     array.append("scamActive")
     array.append("chatScam")
+    array.append("fake")
+    array.append("fakeActive")
+    array.append("chatFake")
     array.append("chatUnarchive")
     array.append("chatArchive")
     array.append("privacySettings_blocked")
@@ -446,15 +441,18 @@ func initialize() -> [String] {
     array.append("poll_quiz_unselected")
     
     array.append("poll_selected")
+    array.append("poll_selection")
     array.append("poll_selected_correct")
     array.append("poll_selected_incorrect")
 
     
     array.append("poll_selected_incoming")
+    array.append("poll_selection_incoming")
     array.append("poll_selected_correct_incoming")
     array.append("poll_selected_incorrect_incoming")
 
     array.append("poll_selected_outgoing")
+    array.append("poll_selection_outgoing")
     array.append("poll_selected_correct_outgoing")
     array.append("poll_selected_incorrect_outgoing")
     
@@ -502,9 +500,168 @@ func initialize() -> [String] {
     array.append("tab_settings")
     array.append("tab_settings_active")
     
+    
+    array.append("profile_add_member")
+    array.append("profile_call")
+    array.append("profile_video_call")
+    array.append("profile_leave")
+    array.append("profile_message")
+    array.append("profile_more")
+    array.append("profile_mute")
+    array.append("profile_unmute")
+    array.append("profile_search")
+    array.append("profile_secret_chat")
+    array.append("profile_edit_photo")
+    array.append("profile_block")
+    array.append("profile_report")
+    array.append("profile_share")
+    array.append("profile_stats")
+    array.append("profile_unblock")
+
+    
+    array.append("chat_quiz_explanation")
+    array.append("chat_quiz_explanation_bubble_incoming")
+    array.append("chat_quiz_explanation_bubble_outgoing")
+    
+    
+    array.append("stickers_add_featured")
+    array.append("stickers_add_featured_unread")
+
+    array.append("channel_info_promo")
+    array.append("channel_info_promo_bubble_incoming")
+    array.append("channel_info_promo_bubble_outgoing")
+    
+    array.append("chat_share_message")
+    array.append("chat_goto_message")
+    array.append("chat_swipe_reply")
+    array.append("chat_like_message")
+    array.append("chat_like_message_unlike")
+    
+    array.append("chat_like_inside")
+    array.append("chat_like_inside_bubble_incoming")
+    array.append("chat_like_inside_bubble_outgoing")
+    array.append("chat_like_inside_bubble_overlay")
+    
+    array.append("chat_like_inside_empty")
+    array.append("chat_like_inside_empty_bubble_incoming")
+    array.append("chat_like_inside_empty_bubble_outgoing")
+    array.append("chat_like_inside_empty_bubble_overlay")
+
+    
+    array.append("gif_trending")
+    
+    
+    array.append("chat_list_thumb_play")
+
+    
+    
+    
+    array.append("call_tooltip_battery_low")
+    array.append("call_tooltip_camera_off")
+    array.append("call_tooltip_micro_off")
+    
+    array.append("call_screen_sharing")
+    array.append("call_screen_sharing_active")
+
+    array.append("call_screen_settings")
+
+    
+    array.append("search_filter")
+    array.append("search_filter_media")
+    array.append("search_filter_files")
+    array.append("search_filter_links")
+    array.append("search_filter_music")
+    array.append("search_filter_add_peer")
+    array.append("search_filter_add_peer_active")
+
+    
+    array.append("chat_reply_count_bubble_incoming")
+    array.append("chat_reply_count_bubble_outgoing")
+    array.append("chat_reply_count")
+    array.append("chat_reply_count_overlay")
+    
+    array.append("channel_comments_bubble")
+    array.append("channel_comments_bubble_next")
+    array.append("channel_comments_list")
+    array.append("channel_comments_overlay")
+    
+    array.append("chat_replies_avatar")
+
+    
+    array.append("group_selection_foreground")
+    array.append("group_selection_foreground_bubble_incoming")
+    array.append("group_selection_foreground_bubble_outgoing")
+    
+    
+    array.append("chat_pinned_list")
+    
+    array.append("chat_pinned_message")
+    array.append("chat_pinned_message_bubble_incoming")
+    array.append("chat_pinned_message_bubble_outgoing")
+    array.append("chat_pinned_message_overlay_bubble")
+    
+    
+    array.append("chat_voicechat_can_unmute")
+    array.append("chat_voicechat_cant_unmute")
+    array.append("chat_voicechat_unmuted")
+
+    array.append("profile_voice_chat")
+    
+    array.append("chat_voice_chat")
+    array.append("chat_voice_chat_active")
+    
+    array.append("editor_draw")
+    array.append("editor_delete")
+    array.append("editor_crop")
+
+    array.append("fast_copy_link")
+
+    array.append("profile_channel_sign")
+    array.append("profile_channel_type")
+    array.append("profile_group_type")
+    array.append("profile_group_destruct")
+    array.append("profile_group_discussion")
+
+    array.append("profile_removed")
+    array.append("profile_links")
+
+    array.append("destruct_clear_history")
+
+    array.append("chat_gigagroup_info")
+    
+    
+    array.append("playlist_next")
+    array.append("playlist_prev")
+    array.append("playlist_next_locked")
+    array.append("playlist_prev_locked")
+
+    array.append("playlist_random")
+    array.append("playlist_order_normal")
+    array.append("playlist_order_reversed")
+    array.append("playlist_order_random")
+
+    array.append("playlist_repeat_none")
+    array.append("playlist_repeat_circle")
+    array.append("playlist_repeat_one")
+    
+    array.append("audioplayer_next")
+    array.append("audioplayer_prev")
+    array.append("audioplayer_dismiss")
+    array.append("audioplayer_repeat_none")
+    array.append("audioplayer_repeat_circle")
+    array.append("audioplayer_repeat_one")
+    array.append("audioplayer_locked_next")
+    array.append("audioplayer_locked_prev")
+    array.append("audioplayer_volume")
+    array.append("audioplayer_volume_off")
+    array.append("audioplayer_speed_x1")
+    array.append("audioplayer_speed_x2")
+
+    
+    
     return array
 }
-
+//swift ./tools/generate-images.swift
 
 
 func generateClass() -> String {

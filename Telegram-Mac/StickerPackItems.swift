@@ -51,6 +51,26 @@ class StickerPackRowItem: TableRowItem {
             items.append(ContextMenuItem.init(L10n.stickersContextArchive, handler: {
                 _ = removeStickerPackInteractively(postbox: context.account.postbox, id: id, option: RemoveStickerPackOption.archive).start()
             }))
+            
+            
+            #if BETA || ALPHA || DEBUG
+            if let resource = info.thumbnail?.resource {
+                items.append(ContextMenuItem("Copy Pack Thumbnail (Dev.)", handler: {
+                    let signal = context.account.postbox.mediaBox.resourceData(resource) |> take(1) |> deliverOnMainQueue
+                    _ = signal.start(next: { data in
+                        if let data = try? Data(contentsOf: URL(fileURLWithPath: data.path)) {
+                            _ = getAnimatedStickerThumb(data: data, size: NSMakeSize(128, 128)).start(next: { path in
+                                if let path = path {
+                                    let pb = NSPasteboard.general
+                                    pb.clearContents()
+                                    pb.writeObjects([NSURL(fileURLWithPath: path)])
+                                }
+                            })
+                        }
+                    })
+                }))
+            }
+            #endif
         default:
             break
         }
@@ -58,7 +78,11 @@ class StickerPackRowItem: TableRowItem {
     }
     
     func contentNode()->ChatMediaContentView.Type {
-        return MediaAnimatedStickerView.self
+        if let file = topItem?.file, file.isAnimatedSticker {
+            return MediaAnimatedStickerView.self
+        } else {
+            return ChatStickerContentView.self
+        }
     }
     
     override func viewClass() -> AnyClass {
@@ -166,9 +190,9 @@ class StickerPackRowView: HorizontalRowView {
             if let thumbnail = item.info.thumbnail {
                 thumbnailItem = thumbnail
                 resourceReference = MediaResourceReference.stickerPackThumbnail(stickerPack: .id(id: item.info.id.id, accessHash: item.info.accessHash), resource: thumbnail.resource)
-                file = TelegramMediaFile(fileId: MediaId(namespace: 0, id: item.info.id.id), partialReference: nil, resource: thumbnail.resource, previewRepresentations: [thumbnail], immediateThumbnailData: nil, mimeType: "image/webp", size: nil, attributes: [.FileName(fileName: "sticker.webp"), .Sticker(displayText: "", packReference: .id(id: item.info.id.id, accessHash: item.info.accessHash), maskData: nil)])
+                file = TelegramMediaFile(fileId: MediaId(namespace: 0, id: item.info.id.id), partialReference: nil, resource: thumbnail.resource, previewRepresentations: [thumbnail], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "image/webp", size: nil, attributes: [.FileName(fileName: "sticker.webp"), .Sticker(displayText: "", packReference: .id(id: item.info.id.id, accessHash: item.info.accessHash), maskData: nil)])
             } else if let item = item.topItem, let dimensions = item.file.dimensions, let resource = chatMessageStickerResource(file: item.file, small: true) as? TelegramMediaResource {
-                thumbnailItem = TelegramMediaImageRepresentation(dimensions: dimensions, resource: resource)
+                thumbnailItem = TelegramMediaImageRepresentation(dimensions: dimensions, resource: resource, progressiveSizes: [], immediateThumbnailData: nil)
                 resourceReference = MediaResourceReference.media(media: .standalone(media: item.file), resource: resource)
                 file = item.file
             }
@@ -257,6 +281,8 @@ class RecentPackRowView: HorizontalRowView {
                 imageView.image = theme.icons.stickersTabFave
             case .recent:
                 imageView.image = theme.icons.stickersTabRecent
+            case let .featured(hasUnred):
+                imageView.image = hasUnred ? theme.icons.stickers_add_featured_unread : theme.icons.stickers_add_featured
             default:
                 break
             }
@@ -412,7 +438,7 @@ private final class AnimatedStickerPackRowView : HorizontalRowView {
             
             var file: TelegramMediaFile?
             if let thumbnail = item.info.thumbnail {
-                file = TelegramMediaFile(fileId: MediaId(namespace: 0, id: item.info.id.id), partialReference: nil, resource: thumbnail.resource, previewRepresentations: [thumbnail], immediateThumbnailData: nil, mimeType: "application/x-tgsticker", size: nil, attributes: [.FileName(fileName: "sticker.tgs"), .Sticker(displayText: "", packReference: .id(id: item.info.id.id, accessHash: item.info.accessHash), maskData: nil)])
+                file = TelegramMediaFile(fileId: MediaId(namespace: 0, id: item.info.id.id), partialReference: nil, resource: thumbnail.resource, previewRepresentations: [thumbnail], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "application/x-tgsticker", size: nil, attributes: [.FileName(fileName: "sticker.tgs"), .Sticker(displayText: "", packReference: .id(id: item.info.id.id, accessHash: item.info.accessHash), maskData: nil)])
             } else if let item = item.topItem {
                 file = item.file
             }

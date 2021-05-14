@@ -77,7 +77,7 @@ public protocol ViewDisplayDelegate : class {
 public class CustomViewHandlers {
     public var size:((NSSize) ->Void)?
     public var origin:((NSPoint) ->Void)?
-    public var layout:((View) ->Void)?
+    public var layout:((NSView) ->Void)?
     
     deinit {
         var bp:Int = 0
@@ -91,6 +91,8 @@ public var viewEnableTouchBar: Bool = true
 
 open class View : NSView, CALayerDelegate, AppearanceViewProtocol {
     
+    
+    public var isDynamicColorUpdateLocked: Bool = false
     
     public var noWayToRemoveFromSuperview: Bool = false
     
@@ -124,7 +126,7 @@ open class View : NSView, CALayerDelegate, AppearanceViewProtocol {
     
     public var animates:Bool = false
     
-    public var isEventLess: Bool = false
+    open var isEventLess: Bool = false
     
     public weak var displayDelegate:ViewDisplayDelegate?
     
@@ -253,7 +255,7 @@ open class View : NSView, CALayerDelegate, AppearanceViewProtocol {
         assertOnMainThread()
         acceptsTouchEvents = true
         self.wantsLayer = true
-       // self.autoresizesSubviews = false
+        self.autoresizesSubviews = false
         layer?.disableActions()
         layer?.backgroundColor = backgroundColor.cgColor
      //   self.layer?.delegate = self
@@ -275,13 +277,28 @@ open class View : NSView, CALayerDelegate, AppearanceViewProtocol {
         }
     }
     
+    open override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+    }
+    
     open func mouseInside() -> Bool {
         return super._mouseInside()
     }
     
     open override func hitTest(_ point: NSPoint) -> NSView? {
         if isEventLess {
-            return nil
+            let view = super.hitTest(point)
+            if let view = view as? View {
+                if view.isEventLess || view === self {
+                    return nil
+                }
+            }
+            if let view = view as? ImageView {
+                if view.isEventLess || view === self {
+                    return nil
+                }
+            }
+            return view
         } else {
             return super.hitTest(point)
         }

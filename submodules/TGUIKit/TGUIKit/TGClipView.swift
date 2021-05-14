@@ -39,6 +39,10 @@ public class TGClipView: NSClipView,CALayerDelegate {
             return super.needsDisplay
         }
     }
+    public var _mouseDownCanMoveWindow: Bool = false
+    public override var mouseDownCanMoveWindow: Bool {
+        return _mouseDownCanMoveWindow
+    }
     
     weak var containingScrollView:NSScrollView? {
         
@@ -287,7 +291,8 @@ public class TGClipView: NSClipView,CALayerDelegate {
     
     
     public func scroll(to point: NSPoint, animated:Bool, completion: @escaping (Bool) -> Void = {_ in})  {
-                
+        
+        self.scrollCompletion?(false)
         self.shouldAnimateOriginChange = animated
         self.scrollCompletion = completion
         if animated {

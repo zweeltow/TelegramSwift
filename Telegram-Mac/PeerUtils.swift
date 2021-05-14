@@ -12,6 +12,12 @@ import SyncCore
 import Postbox
 import SyncCore
 
+let prod_repliesPeerId: PeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt32Value(1271266957))
+let test_repliesPeerId: PeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt32Value(708513))
+
+
+var repliesPeerId: PeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt32Value(1271266957))
+
 
 extension ChatListFilterPeerCategories {
    
@@ -45,7 +51,7 @@ final class TelegramFilterCategory : Peer {
     let category: ChatListFilterPeerCategories
     
     init(category: ChatListFilterPeerCategories) {
-        self.id = PeerId(namespace: 10, id: category.rawValue)
+        self.id = PeerId(namespace: Namespaces.Peer.Empty, id: PeerId.Id._internalFromInt32Value(category.rawValue))
         self.indexName = .title(title: "", addressName: "")
         self.notificationSettingsPeerId = nil
         self.category = category
@@ -137,9 +143,12 @@ extension Peer {
     }
     
     
-
     
-    var canSendMessage: Bool {
+    
+    func canSendMessage(_ isThreadMode: Bool = false) -> Bool {
+        if self.id == repliesPeerId {
+            return false
+        }
         if let channel = self as? TelegramChannel {
             if case .broadcast(_) = channel.info {
                 return channel.hasPermission(.sendMessages)
@@ -147,7 +156,12 @@ extension Peer {
                 switch channel.participationStatus {
                 case .member:
                     return !channel.hasBannedRights(.banSendMessages)
-                default:
+                case .left:
+                    if isThreadMode {
+                        return !channel.hasBannedRights(.banSendMessages)
+                    }
+                    return false
+                case .kicked:
                     return false
                 }
             }
@@ -201,12 +215,13 @@ extension Peer {
                     }
                     name += lastName
                 }
-                return name
+                
+                return name.replacingOccurrences(of: "􀇻", with: "")
             }
         case let group as TelegramGroup:
-            return group.title
+            return group.title.replacingOccurrences(of: "􀇻", with: "")
         case let channel as TelegramChannel:
-            return channel.title
+            return channel.title.replacingOccurrences(of: "􀇻", with: "")
         case let filter as TelegramFilterCategory:
             return filter.displayTitle ?? ""
         default:
@@ -245,16 +260,16 @@ extension Peer {
         switch self {
         case let user as TelegramUser:
             if let firstName = user.firstName {
-                return firstName
+                return firstName.replacingOccurrences(of: "􀇻", with: "")
             } else if let lastName = user.lastName {
-                return lastName
+                return lastName.replacingOccurrences(of: "􀇻", with: "")
             } else {
                 return tr(L10n.peerDeletedUser)
             }
         case let group as TelegramGroup:
-            return group.title
+            return group.title.replacingOccurrences(of: "􀇻", with: "")
         case let channel as TelegramChannel:
-            return channel.title
+            return channel.title.replacingOccurrences(of: "􀇻", with: "")
         case let filter as TelegramFilterCategory:
             return filter.displayTitle ?? ""
         default:
@@ -266,28 +281,28 @@ extension Peer {
         switch self {
         case let user as TelegramUser:
             if let firstName = user.firstName, let lastName = user.lastName, !firstName.isEmpty && !lastName.isEmpty {
-                return [firstName.substring(to: firstName.index(after: firstName.startIndex)).uppercased(), lastName.substring(to: lastName.index(after: lastName.startIndex)).uppercased()]
+                return [firstName[firstName.startIndex ..< firstName.index(after: firstName.startIndex)].uppercased(), lastName[lastName.startIndex ..< lastName.index(after: lastName.startIndex)].uppercased()]
             } else if let firstName = user.firstName, !firstName.isEmpty {
-                return [firstName.substring(to: firstName.index(after: firstName.startIndex)).uppercased()]
+                return [firstName[firstName.startIndex ..< firstName.index(after: firstName.startIndex)].uppercased()]
             } else if let lastName = user.lastName, !lastName.isEmpty {
-                return [lastName.substring(to: lastName.index(after: lastName.startIndex)).uppercased()]
+                return [lastName[lastName.startIndex ..< lastName.index(after: lastName.startIndex)].uppercased()]
             } else {
-                let name = tr(L10n.peerDeletedUser)
+                let name = L10n.peerDeletedUser
                 if !name.isEmpty {
-                    return [name.substring(to: name.index(after: name.startIndex)).uppercased()]
+                    return [name[name.startIndex ..< name.index(after: name.startIndex)].uppercased()]
                 }
             }
             
             return []
         case let group as TelegramGroup:
-            if group.title.startIndex != group.title.endIndex {
-                return [group.title.substring(to: group.title.index(after: group.title.startIndex)).uppercased()]
+            if !group.title.isEmpty {
+                return [group.title[group.title.startIndex ..< group.title.index(after: group.title.startIndex)].uppercased()]
             } else {
                 return []
             }
         case let channel as TelegramChannel:
-            if channel.title.startIndex != channel.title.endIndex {
-                return [channel.title.substring(to: channel.title.index(after: channel.title.startIndex)).uppercased()]
+            if !channel.title.isEmpty {
+                return [channel.title[channel.title.startIndex ..< channel.title.index(after: channel.title.startIndex)].uppercased()]
             } else {
                 return []
             }

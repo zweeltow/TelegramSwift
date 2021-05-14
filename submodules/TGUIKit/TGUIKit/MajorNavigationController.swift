@@ -33,7 +33,10 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
         }
     }
     
-    
+    deinit {
+        var bp:Int = 0
+        bp += 1
+    }
     
     open override func loadView() {
         super.loadView()
@@ -52,11 +55,18 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
         navigationBar.switchViews(left: controller.leftBarView, center: controller.centerBarView, right: controller.rightBarView, controller: controller, style: .none, animationStyle: controller.animationStyle, liveSwiping: false)
         
         containerView.addSubview(controller.view)
+        
         Queue.mainQueue().justDispatch {
             self.controller.viewDidAppear(false)
         }
         
-        
+        containerView.customHandler.layout = { [weak self] view in
+            guard let `self` = self else {
+                return
+            }
+            self.navigationBar.frame = NSMakeRect(self.navigationBar.frame.minX, self.navigationBar.frame.minY, self.controller.frame.width, self.navigationBar.frame.height)
+            self.navigationRightBorder.frame = NSMakeRect(view.frame.width - .borderSize, 0, .borderSize, self.navigationBar.frame.height)
+        }
     }
     
     public func closeSidebar() {
@@ -67,7 +77,22 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
         viewDidChangedNavigationLayout(.single)
     }
     
+    override var containerSize: NSSize {
+        switch genericView.state {
+        case .dual:
+            return NSMakeSize(frame.width - 350, frame.height)
+        default:
+            return super.containerSize
+        }
+    }
   
+    open override func viewDidResized(_ size: NSSize) {
+        super.viewDidResized(size)
+        
+        self.genericView.setFrameSize(size)
+        //_ = atomicSize.swap(size)
+     //   self.genericView.frame = NSMakeRect(0, barInset, <#T##w: CGFloat##CGFloat#>, <#T##h: CGFloat##CGFloat#>)
+    }
     
     public init(_ majorClass:AnyClass, _ empty:ViewController, _ window: Window) {
         self.majorClass = majorClass
@@ -108,7 +133,9 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
         default:
             break
         }
-        controller.viewDidChangedNavigationLayout(state)
+        for listener in listeners {
+            listener.value?.viewDidChangedNavigationLayout(state)
+        }
         viewDidResized(self.frame.size)
     }
     
@@ -165,16 +192,18 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
                         let removeAnimateFlag = strongSelf.stackCount == 2 && isMajorController && !strongSelf.alwaysAnimate
                         
                         if isMajorController {
-                            for controller in strongSelf.stack {
+                            let stack = strongSelf.stack
+                            strongSelf.stack.removeAll()
+                            for controller in stack {
                                 controller.didRemovedFromStack()
                             }
-                            strongSelf.stack.removeAll()
                             
                             strongSelf.stack.append(strongSelf.empty)
                         }
                         
                         if let index = strongSelf.stack.firstIndex(of: controller) {
                             strongSelf.stack.remove(at: index)
+                            
                         }
                         
                         strongSelf.stack.append(controller)
@@ -205,9 +234,8 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
             if stackCount > 1 {
                 let ncontroller = stack[stackCount - 2]
                 let removeAnimateFlag = ((ncontroller == defaultEmpty || !animated) && !alwaysAnimate) && !forceAnimated
-                last.didRemovedFromStack()
                 stack.removeLast()
-                
+                last.didRemovedFromStack()
                 show(ncontroller, removeAnimateFlag ? .none : animationStyle)
             } else {
                 doSomethingOnEmptyBack?()
@@ -240,14 +268,14 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
         
     open override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        self.window?.set(handler: { [weak self] in
+        self.window?.set(handler: { [weak self] _ in
             if let strongSelf = self {
                 return strongSelf.escapeKeyAction()
             }
             return .rejected
         }, with: self, for: .Escape, priority: self.responderPriority)
         
-        self.window?.set(handler: { [weak self] in
+        self.window?.set(handler: { [weak self] _ in
             if let strongSelf = self {
                 return strongSelf.returnKeyAction()
             }
@@ -255,14 +283,14 @@ open class MajorNavigationController: NavigationViewController, SplitViewDelegat
         }, with: self, for: .Return, priority: self.responderPriority)
         
         
-        self.window?.set(handler: { [weak self] in
+        self.window?.set(handler: { [weak self] _ in
             if let strongSelf = self {
                 return strongSelf.backKeyAction()
             }
             return .rejected
         }, with: self, for: .LeftArrow, priority: self.responderPriority)
         
-        self.window?.set(handler: { [weak self] in
+        self.window?.set(handler: { [weak self] _ in
             if let strongSelf = self {
                 return strongSelf.nextKeyAction()
             }

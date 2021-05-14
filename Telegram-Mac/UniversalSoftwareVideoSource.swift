@@ -3,15 +3,15 @@ import SwiftSignalKit
 import Postbox
 import TelegramCore
 import SyncCore
-
+import FFMpegBinding
 
 private func readPacketCallback(userData: UnsafeMutableRawPointer?, buffer: UnsafeMutablePointer<UInt8>?, bufferSize: Int32) -> Int32 {
     let context = Unmanaged<UniversalSoftwareVideoSourceImpl>.fromOpaque(userData!).takeUnretainedValue()
     
-    let data: Signal<Data, NoError>
+    let data: Signal<(Data, Bool), NoError>
     
     let resourceSize: Int = context.size
-    let readCount = min(resourceSize - context.readingOffset, Int(bufferSize))
+    let readCount = min(256 * 1024, Int(bufferSize))
     let requestRange: Range<Int> = context.readingOffset ..< (context.readingOffset + readCount)
     
     context.currentNumberOfReads += 1
@@ -25,8 +25,9 @@ private func readPacketCallback(userData: UnsafeMutableRawPointer?, buffer: Unsa
     let isInitialized = context.videoStream != nil
     let mediaBox = context.mediaBox
     let reference = context.fileReference.resourceReference(context.fileReference.media.resource)
-    let disposable = data.start(next: { data in
-        if data.count == readCount {
+    let disposable = data.start(next: { result in
+        let (data, isComplete) = result
+        if data.count == readCount || isComplete {
             fetchedData = data
             semaphore.signal()
         } else {
@@ -121,9 +122,9 @@ private final class UniversalSoftwareVideoSourceImpl {
         
         self.cancelRead = cancelInitialization
         
-        let ioBufferSize = 64 * 1024
+        let ioBufferSize = 1 * 1024
         
-        guard let avIoContext = FFMpegAVIOContext(bufferSize: Int32(ioBufferSize), opaqueContext: Unmanaged.passUnretained(self).toOpaque(), readPacket: readPacketCallback, seek: seekCallback) else {
+        guard let avIoContext = FFMpegAVIOContext(bufferSize: Int32(ioBufferSize), opaqueContext: Unmanaged.passUnretained(self).toOpaque(), readPacket: readPacketCallback, writePacket: nil, seek: seekCallback) else {
             return nil
         }
         self.avIoContext = avIoContext
@@ -250,11 +251,12 @@ private final class UniversalSoftwareVideoSourceImpl {
         
         self.currentNumberOfReads = 0
         self.currentReadBytes = 0
-        for i in 0 ..< 10 {
+        for _ in 0 ..< 10 {
             let (decodableFrame, loop) = self.readDecodableFrame()
             if let decodableFrame = decodableFrame {
                 if let renderedFrame = videoStream.decoder.render(frame: decodableFrame) {
-                    return (renderedFrame, CGFloat(videoStream.rotationAngle), CGFloat(videoStream.aspect), loop)
+                    //print("Frame rendered in \(self.currentNumberOfReads) reads, \(self.currentReadBytes) bytes, total frames read: \(i + 1)")
+                    return (renderedFrame._cgImage, CGFloat(videoStream.rotationAngle), CGFloat(videoStream.aspect), loop)
                 }
             }
         }
@@ -299,26 +301,25 @@ private final class UniversalSoftwareVideoSourceTakeFrameParams: NSObject {
 
 private final class UniversalSoftwareVideoSourceThread: NSObject {
     @objc static func entryPoint(_ params: UniversalSoftwareVideoSourceThreadParams) {
-        autoreleasepool {
-            let runLoop = RunLoop.current
-            let timer = Timer(fireAt: .distantFuture, interval: 0.0, target: UniversalSoftwareVideoSourceThread.self, selector: #selector(UniversalSoftwareVideoSourceThread.none), userInfo: nil, repeats: false)
-            runLoop.add(timer, forMode: .common)
-            let source = UniversalSoftwareVideoSourceImpl(mediaBox: params.mediaBox, fileReference: params.fileReference, state: params.state, cancelInitialization: params.cancelInitialization)
-            Thread.current.threadDictionary["source"] = source
-            while true {
-                runLoop.run(mode: .default, before: .distantFuture)
-                if Thread.current.threadDictionary["UniversalSoftwareVideoSourceThread_stop"] != nil {
-                    timer.invalidate()
-                    break
-                }
-                
+        let runLoop = RunLoop.current
+        
+        let timer = Timer(fireAt: .distantFuture, interval: 0.0, target: UniversalSoftwareVideoSourceThread.self, selector: #selector(UniversalSoftwareVideoSourceThread.none), userInfo: nil, repeats: false)
+        runLoop.add(timer, forMode: .common)
+        
+        let source = UniversalSoftwareVideoSourceImpl(mediaBox: params.mediaBox, fileReference: params.fileReference, state: params.state, cancelInitialization: params.cancelInitialization)
+        Thread.current.threadDictionary["source"] = source
+        
+        while true {
+            runLoop.run(mode: .default, before: .distantFuture)
+            if Thread.current.threadDictionary["UniversalSoftwareVideoSourceThread_stop"] != nil {
+                break
             }
-            Thread.current.threadDictionary.removeObject(forKey: "source")
         }
+        
+        Thread.current.threadDictionary.removeObject(forKey: "source")
     }
     
     @objc static func none() {
-        
     }
     
     @objc static func stop() {
@@ -330,28 +331,44 @@ private final class UniversalSoftwareVideoSourceThread: NSObject {
             params.completion(nil)
             return
         }
-        autoreleasepool {
-            source.cancelRead = params.cancel
-            source.requiredDataIsNotLocallyAvailable = params.requiredDataIsNotLocallyAvailable
-            source.state.set(.generatingFrame)
-            let startTime = CFAbsoluteTimeGetCurrent()
-            let image = source.readImage(at: params.timestamp).0
-            params.completion(image)
-            source.state.set(.ready)
+        source.cancelRead = params.cancel
+        source.requiredDataIsNotLocallyAvailable = params.requiredDataIsNotLocallyAvailable
+        source.state.set(.generatingFrame)
+        let result = source.readImage(at: params.timestamp)
+        
+        
+        
+        var image = result.0
+        
+        func rad2deg(_ number: CGFloat) -> CGFloat {
+            return number * 180 / .pi
         }
+        
+        if !result.1.isZero, let img = image {
+            let degress = rad2deg(result.1)
+            
+            switch degress {
+            case 90:
+                image = img.createMatchingBackingDataWithImage(orienation: .left)
+            case 180:
+                image = img.createMatchingBackingDataWithImage(orienation: .down)
+            case -90:
+                image = img.createMatchingBackingDataWithImage(orienation: .right)
+            default:
+                break
+            }
+        }
+        
+        source.cancelRead = .single(false)
+        source.requiredDataIsNotLocallyAvailable = nil
+        source.state.set(.ready)
+        params.completion(image)
     }
 }
 
 enum UniversalSoftwareVideoSourceTakeFrameResult {
     case waitingForData
     case image(CGImage?)
-}
-
-private final class WrapThread : Thread {
-    deinit {
-        var bp:Int = 0
-        bp += 1
-    }
 }
 
 final class UniversalSoftwareVideoSource {
@@ -372,10 +389,9 @@ final class UniversalSoftwareVideoSource {
     }
     
     init(mediaBox: MediaBox, fileReference: FileMediaReference) {
-        self.thread = WrapThread(target: UniversalSoftwareVideoSourceThread.self, selector: #selector(UniversalSoftwareVideoSourceThread.entryPoint(_:)), object: UniversalSoftwareVideoSourceThreadParams(mediaBox: mediaBox, fileReference: fileReference, state: self.stateValue, cancelInitialization: self.cancelInitialization.get()))
+        self.thread = Thread(target: UniversalSoftwareVideoSourceThread.self, selector: #selector(UniversalSoftwareVideoSourceThread.entryPoint(_:)), object: UniversalSoftwareVideoSourceThreadParams(mediaBox: mediaBox, fileReference: fileReference, state: self.stateValue, cancelInitialization: self.cancelInitialization.get()))
         self.thread.name = "UniversalSoftwareVideoSource"
         self.thread.start()
-       
     }
     
     deinit {
@@ -384,13 +400,9 @@ final class UniversalSoftwareVideoSource {
     }
     
     public func takeFrame(at timestamp: Double) -> Signal<UniversalSoftwareVideoSourceTakeFrameResult, NoError> {
-        return Signal { [weak thread] subscriber in
+        return Signal { subscriber in
             let cancel = ValuePromise<Bool>(false)
-            guard let thread = thread else {
-                cancel.set(true)
-                return EmptyDisposable
-            }
-            UniversalSoftwareVideoSourceThread.self.perform(#selector(UniversalSoftwareVideoSourceThread.takeFrame(_:)), on: thread, with: UniversalSoftwareVideoSourceTakeFrameParams(timestamp: timestamp, completion: { image in
+            UniversalSoftwareVideoSourceThread.self.perform(#selector(UniversalSoftwareVideoSourceThread.takeFrame(_:)), on: self.thread, with: UniversalSoftwareVideoSourceTakeFrameParams(timestamp: timestamp, completion: { image in
                 subscriber.putNext(.image(image))
                 subscriber.putCompletion()
             }, cancel: cancel.get(), requiredDataIsNotLocallyAvailable: {

@@ -10,12 +10,20 @@ import Foundation
 
 public extension NSColor {
     
+    static func ==(lhs: NSColor, rhs: NSColor) -> Bool {
+        return lhs.argb == rhs.argb
+    }
+    
     static func colorFromRGB(rgbValue:UInt32) ->NSColor {
          return NSColor.init(srgbRed: ((CGFloat)((rgbValue & 0xFF0000) >> 16))/255.0, green: ((CGFloat)((rgbValue & 0xFF00) >> 8))/255.0, blue: ((CGFloat)(rgbValue & 0xFF))/255.0, alpha: 1.0)
     }
     
     static func colorFromRGB(rgbValue:UInt32, alpha:CGFloat) ->NSColor {
         return NSColor.init(srgbRed: ((CGFloat)((rgbValue & 0xFF0000) >> 16))/255.0, green: ((CGFloat)((rgbValue & 0xFF00) >> 8))/255.0, blue: ((CGFloat)(rgbValue & 0xFF))/255.0, alpha:alpha)
+    }
+    
+    var highlighted: NSColor {
+        return self.withAlphaComponent(0.8)
     }
     
     var alpha: CGFloat {
@@ -90,6 +98,27 @@ public extension NSColor {
         return NSColor(hue: max(0.0, min(1.0, hueValue * hue)), saturation: max(0.0, min(1.0, saturationValue * saturation)), brightness: max(0.0, min(1.0, brightnessValue * brightness)), alpha: alphaValue)
     }
 
+    func interpolateTo(_ color: NSColor, fraction: CGFloat) -> NSColor? {
+           let f = min(max(0, fraction), 1)
+
+           var r1: CGFloat = 0.0
+           var r2: CGFloat = 0.0
+           var g1: CGFloat = 0.0
+           var g2: CGFloat = 0.0
+           var b1: CGFloat = 0.0
+           var b2: CGFloat = 0.0
+           var a1: CGFloat = 0.0
+           var a2: CGFloat = 0.0
+           self.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+           color.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+           let r: CGFloat = CGFloat(r1 + (r2 - r1) * f)
+           let g: CGFloat = CGFloat(g1 + (g2 - g1) * f)
+           let b: CGFloat = CGFloat(b1 + (b2 - b1) * f)
+           let a: CGFloat = CGFloat(a1 + (a2 - a1) * f)
+           return NSColor(red: r, green: g, blue: b, alpha: a)
+       }
+
+
     
     static var link:NSColor {
         return .colorFromRGB(rgbValue: 0x2481cc)
@@ -155,7 +184,8 @@ public extension NSColor {
         var brightness  : CGFloat = 0
         var alpha       : CGFloat = 0
         
-        getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
+        let color = self.usingColorSpaceName(NSColorSpaceName.deviceRGB)!
+        color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
         return NSColor( hue: hue,
                         saturation: saturation,
                         brightness: brightness * amount,
@@ -238,15 +268,15 @@ public extension NSColor {
 
 public extension NSColor {
     convenience init(rgb: UInt32) {
-        self.init(srgbRed: CGFloat((rgb >> 16) & 0xff) / 255.0, green: CGFloat((rgb >> 8) & 0xff) / 255.0, blue: CGFloat(rgb & 0xff) / 255.0, alpha: 1.0)
+        self.init(deviceRed: CGFloat((rgb >> 16) & 0xff) / 255.0, green: CGFloat((rgb >> 8) & 0xff) / 255.0, blue: CGFloat(rgb & 0xff) / 255.0, alpha: 1.0)
     }
     
     convenience init(rgb: UInt32, alpha: CGFloat) {
-        self.init(srgbRed: CGFloat((rgb >> 16) & 0xff) / 255.0, green: CGFloat((rgb >> 8) & 0xff) / 255.0, blue: CGFloat(rgb & 0xff) / 255.0, alpha: alpha)
+        self.init(deviceRed: CGFloat((rgb >> 16) & 0xff) / 255.0, green: CGFloat((rgb >> 8) & 0xff) / 255.0, blue: CGFloat(rgb & 0xff) / 255.0, alpha: alpha)
     }
     
     convenience init(argb: UInt32) {
-        self.init(srgbRed: CGFloat((argb >> 16) & 0xff) / 255.0, green: CGFloat((argb >> 8) & 0xff) / 255.0, blue: CGFloat(argb & 0xff) / 255.0, alpha: CGFloat((argb >> 24) & 0xff) / 255.0)
+        self.init(deviceRed: CGFloat((argb >> 16) & 0xff) / 255.0, green: CGFloat((argb >> 8) & 0xff) / 255.0, blue: CGFloat(argb & 0xff) / 255.0, alpha: CGFloat((argb >> 24) & 0xff) / 255.0)
     }
     
     var argb: UInt32 {

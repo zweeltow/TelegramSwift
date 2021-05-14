@@ -21,8 +21,8 @@ class GalleryModernControlsView: View {
     private let shareControl: ImageButton = ImageButton()
     private let moreControl: ImageButton = ImageButton()
     
-    private let zoomInControl: ImageButton = ImageButton()
-    private let zoomOutControl: ImageButton = ImageButton()
+    fileprivate let zoomInControl: ImageButton = ImageButton()
+    fileprivate let zoomOutControl: ImageButton = ImageButton()
     private let rotateControl: ImageButton = ImageButton()
     private let fastSaveControl: ImageButton = ImageButton()
     
@@ -136,7 +136,7 @@ class GalleryModernControlsView: View {
             } else if NSPointInRect(point, dateRect) {
                 interactions?.openMessage()
             } else if let thumbs = thumbs, !NSPointInRect(point, thumbs.frame) {
-                _ = interactions?.dismiss()
+                _ = interactions?.dismiss(event)
             }
         }
         
@@ -222,6 +222,11 @@ class GalleryModernControlsView: View {
                 rotateControl.isHidden = true
                 fastSaveControl.isHidden = true
             }
+        case let .photo(_, _, photo, _, _, _, _):
+            zoomInControl.isHidden = false
+            zoomOutControl.isHidden = false
+            rotateControl.isHidden = !photo.videoRepresentations.isEmpty
+            fastSaveControl.isHidden = false
         default:
             zoomInControl.isHidden = false
             zoomOutControl.isHidden = false
@@ -309,6 +314,7 @@ class GalleryModernControls: GenericViewController<GalleryModernControlsView> {
     private let interactions: GalleryInteractions
     private let thumbs: GalleryThumbsControl
     private let peerDisposable = MetaDisposable()
+    private let zoomControlsDisposable = MetaDisposable()
     init(_ context: AccountContext, interactions: GalleryInteractions, frame: NSRect, thumbsControl: GalleryThumbsControl) {
         self.context = context
         self.interactions = interactions
@@ -329,16 +335,23 @@ class GalleryModernControls: GenericViewController<GalleryModernControlsView> {
     
     deinit {
         peerDisposable.dispose()
+        zoomControlsDisposable.dispose()
     }
     
     
-    func update(_ entry: GalleryEntry?) {
-        if let entry = entry {
-            if let interfaceState = entry.interfaceState {
-                self.genericView.updateControlsVisible(entry)
-                peerDisposable.set((context.account.postbox.loadedPeerWithId(interfaceState.0) |> deliverOnMainQueue).start(next: { [weak self] peer in
-                    guard let `self` = self else {return}
-                    self.genericView.updatePeer(peer, timestamp: interfaceState.1 == 0 ? 0 : interfaceState.1 - self.context.timeDifference, account: self.context.account, canShare: entry.canShare)
+    func update(_ item: MGalleryItem?) {
+        if let item = item {
+            if let interfaceState = item.entry.interfaceState {
+                self.genericView.updateControlsVisible(item.entry)
+                peerDisposable.set((context.account.postbox.loadedPeerWithId(interfaceState.0) |> deliverOnMainQueue).start(next: { [weak self, weak item] peer in
+                    guard let `self` = self, let item = item else {return}
+                    self.genericView.updatePeer(peer, timestamp: interfaceState.1 == 0 ? 0 : interfaceState.1 - self.context.timeDifference, account: self.context.account, canShare: item.entry.canShare)
+                }))
+                zoomControlsDisposable.set((item.magnify.get() |> deliverOnMainQueue).start(next: { [weak self, weak item] value in
+                    if let item = item {
+                        self?.genericView.zoomOutControl.isEnabled = item.minMagnify < value
+                        self?.genericView.zoomInControl.isEnabled = item.maxMagnify > value
+                    }
                 }))
             }
         }
@@ -348,10 +361,11 @@ class GalleryModernControls: GenericViewController<GalleryModernControlsView> {
     
     
     func animateIn() {
+        genericView.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
         genericView.change(pos: NSMakePoint(0, 0), animated: true, timingFunction: CAMediaTimingFunctionName.spring)
     }
     
     func animateOut() {
-        genericView.change(pos: NSMakePoint(0, -frame.height), animated: true, timingFunction: CAMediaTimingFunctionName.spring)
+        genericView.layer?.animateAlpha(from: 1, to: 0, duration: 0.2, removeOnCompletion: false)
     }
 }

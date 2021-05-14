@@ -14,27 +14,68 @@ import SwiftSignalKit
 import SyncCore
 enum LaunchNavigation : PostboxCoding, Equatable {
     case chat(PeerId, necessary: Bool)
+    case thread(MessageId, MessageId, necessary: Bool)
+    case profile(PeerId, necessary: Bool)
     case settings
     
     func encode(_ encoder: PostboxEncoder) {
         switch self {
         case let .chat(peerId, necessary):
             encoder.encodeInt32(0, forKey: "t")
-            encoder.encodeInt32(peerId.namespace, forKey: "p.n")
-            encoder.encodeInt32(peerId.id, forKey: "p.id")
+            encoder.encodeInt32(peerId.namespace._internalGetInt32Value(), forKey: "p.n")
+            encoder.encodeInt32(peerId.id._internalGetInt32Value(), forKey: "p.id")
             encoder.encodeBool(necessary, forKey: "n")
         case .settings:
             encoder.encodeInt32(1, forKey: "t")
+        case let .thread(threadId, fromId, necessary):
+            encoder.encodeInt32(2, forKey: "t")
+            
+            encoder.encodeInt32(threadId.peerId.namespace._internalGetInt32Value(), forKey: "t.p.n")
+            encoder.encodeInt32(threadId.peerId.id._internalGetInt32Value(), forKey: "t.p.id")
+            encoder.encodeInt32(threadId.id, forKey: "t.m.id")
+            encoder.encodeInt32(threadId.namespace, forKey: "t.m.n")
+            
+            encoder.encodeInt32(fromId.peerId.namespace._internalGetInt32Value(), forKey: "f.p.n")
+            encoder.encodeInt32(fromId.peerId.id._internalGetInt32Value(), forKey: "f.p.id")
+            encoder.encodeInt32(fromId.id, forKey: "f.m.id")
+            encoder.encodeInt32(fromId.namespace, forKey: "f.m.n")
+            
+            encoder.encodeBool(necessary, forKey: "n")
+        case let .profile(peerId, necessary: necessary):
+            encoder.encodeInt32(3, forKey: "t")
+
+            encoder.encodeInt32(peerId.namespace._internalGetInt32Value(), forKey: "p.n")
+            encoder.encodeInt32(peerId.id._internalGetInt32Value(), forKey: "p.id")
+
+            encoder.encodeBool(necessary, forKey: "n")
+
         }
     }
     
     init(decoder: PostboxDecoder) {
         switch decoder.decodeInt32ForKey("t", orElse: 0) {
         case 0:
-            let peerId = PeerId(namespace: decoder.decodeInt32ForKey("p.n", orElse: 0), id: decoder.decodeInt32ForKey("p.id", orElse: 0))
+            let peerId = PeerId(namespace: PeerId.Namespace._internalFromInt32Value(decoder.decodeInt32ForKey("p.n", orElse: 0)), id: PeerId.Id._internalFromInt32Value(decoder.decodeInt32ForKey("p.id", orElse: 0)))
             self = .chat(peerId, necessary: decoder.decodeBoolForKey("n", orElse: false))
         case 1:
             self = .settings
+        case 2:
+            
+            let threadPeerId = PeerId(namespace: PeerId.Namespace._internalFromInt32Value(decoder.decodeInt32ForKey("t.p.n", orElse: 0)), id: PeerId.Id._internalFromInt32Value(decoder.decodeInt32ForKey("t.p.id", orElse: 0)))
+
+            
+            let threadId = MessageId(peerId: threadPeerId, namespace: decoder.decodeInt32ForKey("t.m.id", orElse: 0), id: decoder.decodeInt32ForKey("t.m.n", orElse: 0))
+
+            
+            let fromPeerId = PeerId(namespace: PeerId.Namespace._internalFromInt32Value(decoder.decodeInt32ForKey("f.p.n", orElse: 0)), id: PeerId.Id._internalFromInt32Value(decoder.decodeInt32ForKey("f.p.id", orElse: 0)))
+            
+            let fromId = MessageId(peerId: fromPeerId, namespace: decoder.decodeInt32ForKey("f.m.id", orElse: 0), id: decoder.decodeInt32ForKey("f.m.n", orElse: 0))
+
+            self = .thread(threadId, fromId, necessary: decoder.decodeBoolForKey("n", orElse: false))
+        case 3:
+            
+            let peerId = PeerId(namespace: PeerId.Namespace._internalFromInt32Value(decoder.decodeInt32ForKey("p.n", orElse: 0)), id: PeerId.Id._internalFromInt32Value(decoder.decodeInt32ForKey("p.id", orElse: 0)))
+            self = .profile(peerId, necessary: decoder.decodeBoolForKey("n", orElse: false))
         default:
             fatalError()
         }
@@ -56,7 +97,7 @@ struct LaunchSettings: PreferencesEntry, Equatable {
     
     init(decoder: PostboxDecoder) {
         self.applyText = decoder.decodeOptionalStringForKey("at")
-        self.navigation = decoder.decodeObjectForKey("n", decoder: { LaunchNavigation(decoder: $0) }) as? LaunchNavigation
+        self.navigation = decoder.decodeObjectForKey("n1", decoder: { LaunchNavigation(decoder: $0) }) as? LaunchNavigation
         self.previousText = decoder.decodeOptionalStringForKey("pt")
         self.openAtLaunch = decoder.decodeBoolForKey("oat", orElse: true)
     }
@@ -68,9 +109,9 @@ struct LaunchSettings: PreferencesEntry, Equatable {
             encoder.encodeNil(forKey: "at")
         }
         if let navigation = navigation {
-            encoder.encodeObject(navigation, forKey: "n")
+            encoder.encodeObject(navigation, forKey: "n1")
         } else {
-            encoder.encodeNil(forKey: "n")
+            encoder.encodeNil(forKey: "n1")
         }
         if let previousText = previousText {
             encoder.encodeString(previousText, forKey: "pt")
@@ -176,8 +217,8 @@ func applyUpdateTextIfNeeded(_ postbox: Postbox) -> Signal<Never, NoError> {
             }
             
             
-            let peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: 777000)
-            let message = StoreMessage(peerId: peerId, namespace: Namespaces.Message.Local, globallyUniqueId: nil, groupingKey: nil, timestamp: Int32(Date().timeIntervalSince1970), flags: [.Incoming], tags: [], globalTags: [], localTags: [], forwardInfo: nil, authorId: peerId, text: applyText, attributes: attributes, media: [])
+            let peerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt32Value(777000))
+            let message = StoreMessage(peerId: peerId, namespace: Namespaces.Message.Local, globallyUniqueId: nil, groupingKey: nil, threadId: nil, timestamp: Int32(Date().timeIntervalSince1970), flags: [.Incoming], tags: [], globalTags: [], localTags: [], forwardInfo: nil, authorId: peerId, text: applyText, attributes: attributes, media: [])
             _ = transaction.addMessages([message], location: .UpperHistoryBlock)
             
             transaction.updatePreferencesEntry(key: ApplicationSpecificPreferencesKeys.launchSettings, { pref in

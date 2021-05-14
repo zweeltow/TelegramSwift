@@ -45,7 +45,7 @@ class ChatEmptyPeerItem: TableRowItem {
         let attr = NSMutableAttributedString()
         var lineSpacing: CGFloat? = 5
         switch chatInteraction.mode {
-        case .history:
+        case .history, .preview:
             if  chatInteraction.peerId.namespace == Namespaces.Peer.SecretChat {
                 _ = attr.append(string: L10n.chatSecretChatEmptyHeader, color: theme.chatServiceItemTextColor, font: .medium(.text))
                 _ = attr.append(string: "\n")
@@ -96,6 +96,17 @@ class ChatEmptyPeerItem: TableRowItem {
         case .scheduled:
             lineSpacing = nil
             _ = attr.append(string: L10n.chatEmptyChat, color: theme.chatServiceItemTextColor, font: .medium(.text))
+        case let .replyThread(_, mode):
+            lineSpacing = nil
+            switch mode {
+            case .comments:
+                _ = attr.append(string: L10n.chatEmptyComments, color: theme.chatServiceItemTextColor, font: .medium(.text))
+            case .replies:
+                _ = attr.append(string: L10n.chatEmptyReplies, color: theme.chatServiceItemTextColor, font: .medium(.text))
+            }
+        case .pinned:
+            lineSpacing = nil
+            _ = attr.append(string: L10n.chatEmptyChat, color: theme.chatServiceItemTextColor, font: .medium(.text))
         }
         
         
@@ -117,6 +128,9 @@ class ChatEmptyPeerItem: TableRowItem {
                     }
                     if user.isScam {
                         about = L10n.peerInfoScamWarning
+                    }
+                    if user.isFake {
+                        about = L10n.peerInfoFakeWarning
                     }
                     guard let `self` = self else {return}
                     let attr = NSMutableAttributedString()

@@ -14,10 +14,10 @@ import Postbox
 import TelegramCore
 import SyncCore
 
-let mediaExts:[String] = ["png","jpg","jpeg","tiff","mp4","mov","avi", "gif"]
-let photoExts:[String] = ["png","jpg","jpeg","tiff"]
-let videoExts:[String] = ["mp4","mov","avi"]
-
+let mediaExts:[String] = ["png","jpg","jpeg","tiff", "heic","mp4","mov","avi", "gif", "m4v"]
+let photoExts:[String] = ["png","jpg","jpeg","tiff", "heic"]
+let videoExts:[String] = ["mp4","mov","avi", "m4v"]
+let audioExts:[String] = ["mp3","wav", "m4a"]
 
 func filePanel(with exts:[String]? = nil, allowMultiple:Bool = true, canChooseDirectories: Bool = false, for window:Window, completion:@escaping ([String]?)->Void) {
     var result:[String] = []
@@ -103,15 +103,18 @@ func savePanel(file:String, ext:String, for window:Window, defaultName: String? 
 //    })
     
 //    
-//    
-    if let editor = savePanel.fieldEditor(false, for: nil) {
-        let exportFilename = savePanel.nameFieldStringValue
-        let ext = exportFilename.nsstring.pathExtension
-        if !ext.isEmpty {
-            let extensionLength = exportFilename.length - ext.length - 1
-            editor.selectedRange = NSMakeRange(0, extensionLength)
-        }
-    }
+//
+//    DispatchQueue.main.async {
+//        if let editor = savePanel.fieldEditor(false, for: nil) {
+//            let exportFilename = savePanel.nameFieldStringValue
+//            let ext = exportFilename.nsstring.pathExtension
+//            if !ext.isEmpty {
+//                let extensionLength = exportFilename.length - ext.length - 1
+//                editor.selectedRange = NSMakeRange(0, extensionLength)
+//            }
+//        }
+//    }
+    
 }
 
 func savePanel(file:String, named:String, for window:Window) {
@@ -127,20 +130,20 @@ func savePanel(file:String, named:String, for window:Window) {
         }
     })
     
-    if let editor = savePanel.fieldEditor(false, for: nil) {
-        let exportFilename = savePanel.nameFieldStringValue
-        let ext = exportFilename.nsstring.pathExtension
-        if !ext.isEmpty {
-            let extensionLength = exportFilename.length - ext.length - 1
-            editor.selectedRange = NSMakeRange(0, extensionLength)
-        }
-    }
+//    if let editor = savePanel.fieldEditor(false, for: nil) {
+//        let exportFilename = savePanel.nameFieldStringValue
+//        let ext = exportFilename.nsstring.pathExtension
+//        if !ext.isEmpty {
+//            let extensionLength = exportFilename.length - ext.length - 1
+//            editor.selectedRange = NSMakeRange(0, extensionLength)
+//        }
+//    }
     
 }
 
 
 
-func alert(for window:Window, header:String = appName, info:String?, runModal: Bool = false, completion: (()->Void)? = nil) {
+func alert(for window:Window, header:String = appName, info:String?, runModal: Bool = false, completion: (()->Void)? = nil, appearance: NSAppearance? = nil) {
 //
 //    let alert = AlertController(window, header: header, text: info ?? "")
 //    alert.show(completionHandler: { response in
@@ -148,19 +151,19 @@ func alert(for window:Window, header:String = appName, info:String?, runModal: B
 //    })
 
     let alert:NSAlert = NSAlert()
-    alert.window.appearance = theme.appearance
+    alert.window.appearance = appearance ?? theme.appearance
     alert.alertStyle = .informational
     alert.messageText = header
     alert.informativeText = info ?? ""
     alert.addButton(withTitle: L10n.alertOK)
     
     
-    alert.addButton(withTitle: L10n.alertCancel)
-    alert.buttons.last?.wantsLayer = true
-    alert.buttons.last?.layer?.opacity = 0
-    alert.buttons.last?.keyEquivalent = "\u{1b}"
-    alert.buttons.last?.removeAllSubviews()
-    alert.buttons.last?.focusRingType = .none
+//    alert.addButton(withTitle: L10n.alertCancel)
+//    alert.buttons.last?.wantsLayer = true
+//    alert.buttons.last?.layer?.opacity = 0
+//    alert.buttons.last?.keyEquivalent = "\u{1b}"
+//    alert.buttons.last?.removeAllSubviews()
+//    alert.buttons.last?.focusRingType = .none
     if runModal {
         alert.runModal()
     } else {
@@ -181,11 +184,11 @@ enum ConfirmResult {
     case basic
 }
 
-func confirm(for window:Window, header: String? = nil, information:String?, okTitle:String? = nil, cancelTitle:String = L10n.alertCancel, thridTitle:String? = nil, fourTitle: String? = nil, successHandler:@escaping (ConfirmResult)->Void) {
+func confirm(for window:Window, header: String? = nil, information:String?, okTitle:String? = nil, cancelTitle:String = L10n.alertCancel, thridTitle:String? = nil, fourTitle: String? = nil, successHandler:@escaping (ConfirmResult)->Void, cancelHandler: (()->Void)? = nil, appearance: NSAppearance? = nil) {
 
     
     let alert:NSAlert = NSAlert()
-    alert.window.appearance = theme.appearance
+    alert.window.appearance = appearance ?? theme.appearance
     alert.alertStyle = .informational
     alert.messageText = header ?? appName
     alert.informativeText = information ?? ""
@@ -194,7 +197,7 @@ func confirm(for window:Window, header: String? = nil, information:String?, okTi
         alert.addButton(withTitle: cancelTitle)
         alert.buttons.last?.keyEquivalent = "\u{1b}"
     }
-    
+
 
     
     if let thridTitle = thridTitle {
@@ -214,16 +217,18 @@ func confirm(for window:Window, header: String? = nil, information:String?, okTi
                 successHandler(.thrid)
             } else if response.rawValue == 1001, cancelTitle == "" {
                 successHandler(.thrid)
+            } else if response.rawValue == 1001 {
+                cancelHandler?()
             }
         }
     })
 }
 
-func modernConfirm(for window:Window, account: Account?, peerId: PeerId?, header: String = appName, information:String? = nil, okTitle:String = L10n.alertOK, cancelTitle:String = L10n.alertCancel, thridTitle:String? = nil, thridAutoOn: Bool = true, successHandler:@escaping(ConfirmResult)->Void) {
+func modernConfirm(for window:Window, account: Account? = nil, peerId: PeerId? = nil, header: String = appName, information:String? = nil, okTitle:String = L10n.alertOK, cancelTitle:String = L10n.alertCancel, thridTitle:String? = nil, thridAutoOn: Bool = true, successHandler:@escaping(ConfirmResult)->Void, appearance: NSAppearance? = nil) {
     //
     
     let alert:NSAlert = NSAlert()
-    alert.window.appearance = theme.appearance
+    alert.window.appearance = appearance ?? theme.appearance
     alert.alertStyle = .informational
     alert.messageText = header
     alert.informativeText = information ?? ""
@@ -280,7 +285,7 @@ func modernConfirm(for window:Window, account: Account?, peerId: PeerId?, header
     
     _ = signal.start(next: { peer in
         if let peer = peer, let account = account {
-            alert.messageText = account.peerId == peer.id ? L10n.peerSavedMessages : peer.displayTitle
+            alert.messageText = header.isEmpty || header == appName ? (account.peerId == peer.id ? L10n.peerSavedMessages : peer.displayTitle) : header
             alert.icon = nil
             if peerId == account.peerId {
                 let icon = theme.icons.searchSaved
@@ -340,7 +345,7 @@ func modernConfirmSignal(for window:Window, account: Account?, peerId: PeerId?, 
     
 }
 
-func confirmSignal(for window:Window, header: String? = nil, information:String?, okTitle:String? = nil, cancelTitle:String? = nil) -> Signal<Bool, NoError> {
+func confirmSignal(for window:Window, header: String? = nil, information:String?, okTitle:String? = nil, cancelTitle:String? = nil, appearance: NSAppearance? = nil) -> Signal<Bool, NoError> {
 //    let value:ValuePromise<Bool> = ValuePromise(ignoreRepeated: true)
 //
 //    Queue.mainQueue().async {
@@ -357,7 +362,7 @@ func confirmSignal(for window:Window, header: String? = nil, information:String?
         let alert:NSAlert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = header ?? appName
-        alert.window.appearance = theme.appearance
+        alert.window.appearance = appearance ?? theme.appearance
         alert.informativeText = information ?? ""
         alert.addButton(withTitle: okTitle ?? tr(L10n.alertOK))
         alert.addButton(withTitle: cancelTitle ?? tr(L10n.alertCancel))

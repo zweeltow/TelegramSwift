@@ -78,9 +78,9 @@ public class ChartStackSection: View, ChartThemeContainer {
         fatalError("init(frame:) has not been implemented")
     }
     
-    public func apply(theme: ChartTheme, animated: Bool) {
+    public func apply(theme: ChartTheme, strings: ChartStrings, animated: Bool) {
         View.perform(animated: animated && self.isVisibleInWindow) {
-            self.backgroundColor = theme.tableBackgroundColor
+            self.backgroundColor = theme.chartBackgroundColor
             
             self.sectionContainerView.backgroundColor = theme.chartBackgroundColor
             self.rangeView.backgroundColor = theme.chartBackgroundColor
@@ -92,21 +92,21 @@ public class ChartStackSection: View, ChartThemeContainer {
             _ = self.backButton.sizeToFit()
             
             for separator in self.separators {
-                separator.backgroundColor = theme.tableSeparatorColor
+                separator.backgroundColor = theme.chartStrongLinesColor
             }
         }
         
         if rangeView.isVisibleInWindow || chartView.isVisibleInWindow {
             chartView.loadDetailsViewIfNeeded()
-            chartView.apply(theme: theme, animated: animated && chartView.isVisibleInWindow)
-            controller.apply(theme: theme, animated: animated)
-            rangeView.apply(theme: theme, animated: animated && rangeView.isVisibleInWindow)
+            chartView.apply(theme: theme, strings: strings, animated: animated && chartView.isVisibleInWindow)
+            controller.apply(theme: theme, strings: strings, animated: animated)
+            rangeView.apply(theme: theme, strings: strings, animated: animated && rangeView.isVisibleInWindow)
         } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + TimeInterval.random(in: 0...0.1)) {
                 self.chartView.loadDetailsViewIfNeeded()
-                self.controller.apply(theme: theme, animated: false)
-                self.chartView.apply(theme: theme, animated: false)
-                self.rangeView.apply(theme: theme, animated: false)
+                self.controller.apply(theme: theme, strings: strings, animated: false)
+                self.chartView.apply(theme: theme, strings: strings, animated: false)
+                self.rangeView.apply(theme: theme, strings: strings, animated: false)
             }
           
         }
@@ -166,16 +166,21 @@ public class ChartStackSection: View, ChartThemeContainer {
             self.controller.chartInteractionDidBegin(point: point)
         }
         chartView.userDidDeselectCoordinateClosure = { [unowned self] in
-            self.controller.chartInteractionDidEnd()
+            self.controller.cancelChartInteraction()
         }
+        
         controller.cartViewBounds = { [unowned self] in
             return self.chartView.bounds
         }
         controller.chartFrame = { [unowned self] in
             return self.chartView.chartFrame
         }
-        controller.setDetailsViewModel = { [unowned self] viewModel, animated in
+        controller.setDetailsViewModel = { [unowned self] viewModel, animated, _ in
             self.chartView.setDetailsViewModel(viewModel: viewModel, animated: animated)
+            
+            self.chartView.userWantZoomIfPossible = {
+                viewModel.tapAction?()
+            }
         }
         controller.setDetailsChartVisibleClosure = { [unowned self] visible, animated in
             self.chartView.setDetailsChartVisible(visible, animated: animated)
@@ -216,5 +221,9 @@ public class ChartStackSection: View, ChartThemeContainer {
         controller.initializeChart()
         updateToolViews(animated: false)
         
+    }
+    
+    public func updateMouse() {
+        self.chartView.updateMouse()
     }
 }

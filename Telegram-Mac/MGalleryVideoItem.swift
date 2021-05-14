@@ -55,8 +55,7 @@ class MGalleryVideoItem: MGalleryItem {
     }
     
     deinit {
-        var bp:Int = 0
-        bp += 1
+        updateMagnifyDisposable.dispose()
     }
         
     override func singleView() -> NSView {
@@ -64,6 +63,7 @@ class MGalleryVideoItem: MGalleryItem {
         
     }
     private var isPausedGlobalPlayer: Bool = false
+    private let updateMagnifyDisposable = MetaDisposable()
     
     override func appear(for view: NSView?) {
         super.appear(for: view)
@@ -77,6 +77,15 @@ class MGalleryVideoItem: MGalleryItem {
         controller.play(startTime)
         controller.viewDidAppear(false)
         self.startTime = 0
+        
+        
+        updateMagnifyDisposable.set((magnify.get() |> deliverOnMainQueue).start(next: { [weak self] value in
+            if value < 1.0 {
+                _ = self?.hideControls(forceHidden: true)
+            } else {
+                _ = self?.unhideControls(forceUnhidden: true)
+            }
+        }))
     }
     
     override var maxMagnify: CGFloat {
@@ -92,6 +101,7 @@ class MGalleryVideoItem: MGalleryItem {
             controller.pause()
         }
         controller.viewDidDisappear(false)
+        updateMagnifyDisposable.set(nil)
         playAfter = false
     }
     
@@ -129,7 +139,9 @@ class MGalleryVideoItem: MGalleryItem {
             return media.dimensions?.size
         }
         try? FileManager.default.removeItem(at: url)
-        self.examinatedSize = track.naturalSize.applying(track.preferredTransform)
+        let size = track.naturalSize.applying(track.preferredTransform)
+        self.examinatedSize = NSMakeSize(abs(size.width), abs(size.height))
+        
         return examinatedSize
         
     }
@@ -146,14 +158,39 @@ class MGalleryVideoItem: MGalleryItem {
             
             var pagerSize = self.pagerSize
             
-            pagerSize.height -= (caption != nil ? caption!.layoutSize.height + 80 : 0)
             
-            let size = NSMakeSize(max(size.width, 200), max(size.height, 200)).fitted(pagerSize)
+            var size = size
             
+            if size.width == 0 || size.height == 0 {
+                size = NSMakeSize(300, 300)
+            }
             
+            let aspectRatio = size.width / size.height
+            let addition = max(300 - size.width, 300 - size.height)
+            
+            if addition > 0 {
+                size.width += addition * aspectRatio
+                size.height += addition
+            }
+            
+//            let addition = max(400 - size.width, 400 - size.height)
+//            if addition > 0 {
+//                size.width += addition
+//                size.height += addition
+//            }
+            
+            size = size.fitted(pagerSize)
+
             return size
         }
         return pagerSize
+    }
+    
+    func hideControls(forceHidden: Bool = false) -> Bool {
+        return controller.hideControlsIfNeeded(forceHidden)
+    }
+    func unhideControls(forceUnhidden: Bool = true) -> Bool {
+        return controller.unhideControlsIfNeeded(forceUnhidden)
     }
     
     override func toggleFullScreen() {
@@ -178,11 +215,13 @@ class MGalleryVideoItem: MGalleryItem {
     
     override func request(immediately: Bool) {
 
+        super.request(immediately: immediately)
         
         let signal:Signal<ImageDataTransformation,NoError> = chatMessageVideo(postbox: context.account.postbox, fileReference: entry.fileReference(media), scale: System.backingScale, synchronousLoad: true)
         
+        let size = sizeValue
         
-        let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: media.dimensions?.size.fitted(pagerSize) ?? sizeValue, boundingSize: sizeValue, intrinsicInsets: NSEdgeInsets(), resizeMode: .none)
+        let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: size, boundingSize: size, intrinsicInsets: NSEdgeInsets(), resizeMode: .none)
         let result = signal |> mapToThrottled { data -> Signal<CGImage?, NoError> in
             return .single(data.execute(arguments, data.data)?.generateImage())
         }
@@ -194,12 +233,10 @@ class MGalleryVideoItem: MGalleryItem {
             return .never()
         })
         
-        self.image.set(media.previewRepresentations.isEmpty ? .single(.image(nil, nil)) |> deliverOnMainQueue : result |> map { .image($0 != nil ? NSImage(cgImage: $0!, size: $0!.backingSize) : nil, nil) } |> deliverOnMainQueue)
+        self.image.set(media.previewRepresentations.isEmpty ? .single(GPreviewValueClass(.image(nil, nil))) |> deliverOnMainQueue : result |> map { GPreviewValueClass(.image($0 != nil ? NSImage(cgImage: $0!, size: $0!.backingSize) : nil, nil)) } |> deliverOnMainQueue)
         
         fetch()
     }
-    
-    
     
     
     override func fetch() -> Void {

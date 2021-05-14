@@ -135,7 +135,7 @@ final class AnimatedStickerGridItemView: GridItemNode, ModalPreviewRowViewProtoc
     func setup(context: AccountContext, file: TelegramMediaFile) {
         let size = NSMakeSize(60, 60)
         self.currentState = (context, file, size)
-        view.update(with: file, size: size, context: context, parent: nil, table: nil, parameters: nil, animated: false, positionFlags: nil, approximateSynchronousValue: false)
+        view.update(with: file, size: size, context: context, parent: nil, table: nil, parameters: ChatAnimatedStickerMediaLayoutParameters(playPolicy: nil, alwaysAccept: nil, cache: nil, media: file), animated: false, positionFlags: nil, approximateSynchronousValue: false)
     }
     
     
@@ -216,7 +216,7 @@ final class StickerGridItemView: GridItemNode, ModalPreviewRowViewProtocol {
             
             let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: NSMakeSize(60, 60), boundingSize: NSMakeSize(60, 60), intrinsicInsets: NSEdgeInsets())
             imageView.setSignal(signal: cachedMedia(media: file, arguments: arguments, scale: backingScaleFactor))
-            imageView.setSignal(chatMessageSticker(postbox: context.account.postbox, file: file, small: false, scale: backingScaleFactor, fetched: true), cacheImage: { result in
+            imageView.setSignal(chatMessageSticker(postbox: context.account.postbox, file: stickerPackFileReference(file), small: false, scale: backingScaleFactor, fetched: true), cacheImage: { result in
                 cacheMedia(result, media: file, arguments: arguments, scale: System.backingScale)
             })
             

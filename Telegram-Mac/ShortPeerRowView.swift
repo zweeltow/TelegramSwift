@@ -114,6 +114,9 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
     
     
     override var backdorColor: NSColor {
+        if let item = item as? ShortPeerRowItem, let theme = item.customTheme {
+            return item.isHighlighted || item.isSelected ? theme.highlightColor : theme.backgroundColor
+        }
         if let item = item as? ShortPeerRowItem, item.alwaysHighlight {
             return item.isSelected ? theme.colors.grayForeground : theme.colors.background
         }
@@ -145,7 +148,7 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
                         
                         if let status = (isRowSelected ? item.statusSelected : item.status) {
                             let t = title.0.size.height + status.0.size.height + 1.0
-                            tY = (NSHeight(self.frame) - t) / 2.0
+                            tY = floorToScreenPixels(backingScaleFactor, (self.frame.height - t) / 2.0)
                             
                             let sY = tY + title.0.size.height + 1.0
                             if hiddenStatus {
@@ -157,9 +160,10 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
                         
                         if item.peer.isVerified && item.highlightVerified {
                             ctx.draw(isRowSelected ? theme.icons.verifyDialogActive : theme.icons.verifyDialog, in: NSMakeRect(item.textInset + title.0.size.width - 1, tY - 3, 24, 24))
-                        }
-                        if item.peer.isScam && item.highlightVerified {
+                        } else if item.peer.isScam && item.highlightVerified {
                             ctx.draw(isRowSelected ? theme.icons.scamActive : theme.icons.scam, in: NSMakeRect(item.textInset + title.0.size.width + 5, tY + 1, theme.icons.scam.backingSize.width, theme.icons.scam.backingSize.height))
+                        } else if item.peer.isFake && item.highlightVerified {
+                            ctx.draw(isRowSelected ? theme.icons.fakeActive : theme.icons.fake, in: NSMakeRect(item.textInset + title.0.size.width + 5, tY + 1, theme.icons.fake.backingSize.width, theme.icons.fake.backingSize.height))
                         }
                     }
                 case .modern:
@@ -201,18 +205,21 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
     
     override func updateColors() {
         
+        guard let item = item as? ShortPeerRowItem else {
+            return
+        }
+        
         let highlighted = backdorColor
 
+        let customTheme = item.customTheme
         
         self.containerView.background = backdorColor
-        self.separator.backgroundColor = theme.colors.border
+        self.separator.backgroundColor = customTheme?.borderColor ?? theme.colors.border
         self.contextLabel?.background = backdorColor
         containerView.set(background: backdorColor, for: .Normal)
         containerView.set(background: highlighted, for: .Highlight)
 
-        guard let item = item as? ShortPeerRowItem else {
-            return
-        }
+       
         self.background = item.viewType.rowBackground
         needsDisplay = true
     }
@@ -415,9 +422,12 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
         case let .selectable(interaction):
            
             if selectControl == nil {
-                selectControl = SelectingControl(unselectedImage: theme.icons.chatToggleUnselected, selectedImage: theme.icons.chatToggleSelected)
+                let unselected: CGImage = item.customTheme?.unselectedImage ?? theme.icons.chatToggleUnselected
+                let selected: CGImage = item.customTheme?.selectedImage ?? theme.icons.chatToggleSelected
+
+                selectControl = SelectingControl(unselectedImage: unselected, selectedImage: selected)
             }
-            selectControl?.set(selected: interaction.presentation.selected.contains(item.peer.id), animated: animated)
+            selectControl?.set(selected: interaction.presentation.selected.contains(item.peerId), animated: animated)
             
             containerView.addSubview(selectControl!)
             
@@ -451,7 +461,7 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
             deleteControl?.removeAllHandlers()
             deleteControl?.set(handler: { [weak item] _ in
                 if let item = item, item.enabled {
-                    interaction.onRemove(item.peer.id)
+                    interaction.onRemove(item.peerId)
                 }
             }, for: .Click)
             
@@ -505,9 +515,9 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
             }
             guard let activities = activities else {return}
             
-            let inputActivites: (PeerId, [(Peer, PeerInputActivity)]) = (item.peer.id, [(item.peer, activity)])
+            let inputActivites: (PeerId, [(Peer, PeerInputActivity)]) = (item.peerId, [(item.peer, activity)])
             
-            activities.update(with: inputActivites, for: max(frame.width - 60, 160), theme:theme.activity(key: 4, foregroundColor: theme.colors.accent, backgroundColor: theme.colors.background), layout: { [weak self] show in
+            activities.update(with: inputActivites, for: max(frame.width - 60, 160), theme:theme.activity(key: 4, foregroundColor: item.customTheme?.accentColor ?? theme.colors.accent, backgroundColor: backdorColor), layout: { [weak self] show in
                 self?.needsLayout = true
                 self?.hiddenStatus = !show
                 self?.needsDisplay = true
@@ -535,7 +545,7 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
             let canSeparate: Bool = item.index != item.table!.count - 1
             separator.isHidden = !(!isRowSelected && item.drawCustomSeparator && (canSeparate || item.drawLastSeparator))
         case let .modern(position, _):
-            separator.isHidden = !position.border
+            separator.isHidden = !position.border || !item.drawCustomSeparator
         }
         
         image.setFrameSize(item.photoSize)
@@ -570,7 +580,7 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
                     contextLabel = TextViewLabel()
                     containerView.addSubview(contextLabel!)
                 }
-                contextLabel?.attributedString = .initialize(string: label, color: theme.colors.grayText, font: item.statusStyle.font)
+                contextLabel?.attributedString = .initialize(string: label, color: item.customTheme?.secondaryColor ?? theme.colors.grayText, font: item.statusStyle.font)
                 contextLabel?.sizeToFit()
             } else {
                 contextLabel?.removeFromSuperview()
@@ -579,7 +589,7 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
         case let .selectable(stateback: stateback):
             if stateback {
                 choiceControl = ImageView()
-                choiceControl?.image = theme.icons.generalSelect
+                choiceControl?.image = #imageLiteral(resourceName: "Icon_UsernameAvailability").precomposed(item.customTheme?.accentColor ?? theme.colors.accent)
                 choiceControl?.sizeToFit()
                 containerView.addSubview(choiceControl!)
             }
@@ -591,6 +601,7 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
             contextLabel = nil
             break
         }
+        self.image._change(opacity: item.enabled ? 1 : 0.8, animated: animated)
         rightSeparatorView.backgroundColor = theme.colors.border
         contextLabel?.backgroundColor = backdorColor
         needsLayout = true
@@ -600,7 +611,7 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
     func invokeAction(_ item: ShortPeerRowItem, clickCount: Int) {
         switch item.interactionType {
         case let .selectable(interaction):
-            interaction.update({$0.withToggledSelected(item.peer.id, peer: item.peer)})
+            interaction.update({$0.withToggledSelected(item.peerId, peer: item.peer)})
         default:
             if clickCount <= 1 {
                 item.action()
@@ -617,8 +628,8 @@ class ShortPeerRowView: TableRowView, Notifable, ViewDisplayDelegate {
             switch item.interactionType {
             case .selectable(_):
                 if let value = value as? SelectPeerPresentation, let oldValue = oldValue as? SelectPeerPresentation {
-                    let new = value.selected.contains(item.peer.id)
-                    let old = oldValue.selected.contains(item.peer.id)
+                    let new = value.selected.contains(item.peerId)
+                    let old = oldValue.selected.contains(item.peerId)
                     if new != old {
                         selectControl?.set(selected: new, animated: animated)
                     }

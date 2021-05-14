@@ -46,9 +46,15 @@ class ChatAudioContentView: ChatMediaContentView, APDelegate {
     override var fetchStatus: MediaResourceStatus? {
         didSet {
             if let fetchStatus = fetchStatus {
+                
                 switch fetchStatus {
                 case let .Fetching(_, progress):
-                    progressView.state = .Fetching(progress: progress, force: false)
+                    let sentGrouped = parent?.groupingKey != nil && (parent!.flags.contains(.Sending) || parent!.flags.contains(.Unsent))
+                    if progress == 1.0, sentGrouped {
+                        progressView.state = .Success
+                    } else {
+                        progressView.state = .Fetching(progress: progress, force: false)
+                    }
                 case .Remote:
                     progressView.state = .Remote
                 case .Local:
@@ -76,17 +82,14 @@ class ChatAudioContentView: ChatMediaContentView, APDelegate {
     
     override func open() {
         if let parameters = parameters as? ChatMediaMusicLayoutParameters, let context = context, let parent = parent  {
-            if let controller = globalAudio, let song = controller.currentSong, song.entry.isEqual(to: parent) {
-                controller.playOrPause()
-            } else {
-                
-               
+            if let controller = globalAudio, controller.playOrPause(parent.id) {
+            } else {               
                 let controller:APController
 
                 if parameters.isWebpage {
-                    controller = APSingleResourceController(account: context.account, wrapper: APSingleWrapper(resource: parameters.resource, mimeType: parameters.file.mimeType, name: parameters.title, performer: parameters.performer, id: parent.chatStableId), streamable: true)
+                    controller = APSingleResourceController(context: context, wrapper: APSingleWrapper(resource: parameters.resource, mimeType: parameters.file.mimeType, name: parameters.title, performer: parameters.performer, duration: parameters.file.duration, id: parent.chatStableId), streamable: true, volume: FastSettings.volumeRate)
                 } else {
-                    controller = APChatMusicController(account: context.account, peerId: parent.id.peerId, index: MessageIndex(parent))
+                    controller = APChatMusicController(context: context, chatLocationInput: parameters.chatLocationInput(), mode: parameters.chatMode, index: MessageIndex(parent), volume: FastSettings.volumeRate)
                 }
                 parameters.showPlayer(controller)
                 controller.start()
@@ -104,35 +107,30 @@ class ChatAudioContentView: ChatMediaContentView, APDelegate {
     }
     
     
-    override func cancelFetching() {
-        if let context = context, let media = media as? TelegramMediaFile, let parent = parent {
-            messageMediaFileCancelInteractiveFetch(context: context, messageId: parent.id, fileReference: FileMediaReference.message(message: MessageReference(parent), media: media))
-        }
+    
+    func songDidChanged(song: APSongItem, for controller: APController, animated: Bool) {
+        checkState(animated: animated)
+    }
+    func songDidChangedState(song: APSongItem, for controller: APController, animated: Bool) {
+        checkState(animated: animated)
     }
     
-    func songDidChanged(song: APSongItem, for controller: APController) {
-        checkState()
+    func songDidStartPlaying(song:APSongItem, for controller:APController, animated: Bool) {
+        checkState(animated: animated)
     }
-    func songDidChangedState(song: APSongItem, for controller: APController) {
-        checkState()
+    func songDidStopPlaying(song:APSongItem, for controller:APController, animated: Bool) {
+        checkState(animated: animated)
     }
-    
-    func songDidStartPlaying(song:APSongItem, for controller:APController) {
-        checkState()
-    }
-    func songDidStopPlaying(song:APSongItem, for controller:APController) {
-        checkState()
-    }
-    func playerDidChangedTimebase(song:APSongItem, for controller:APController) {
+    func playerDidChangedTimebase(song:APSongItem, for controller:APController, animated: Bool) {
         
     }
     
-    func audioDidCompleteQueue(for controller:APController) {
+    func audioDidCompleteQueue(for controller:APController, animated: Bool) {
         
     }
     
     
-    func checkState() {
+    func checkState(animated: Bool) {
         
         let presentation: ChatMediaPresentation = parameters?.presentation ?? .Empty
         
@@ -170,9 +168,7 @@ class ChatAudioContentView: ChatMediaContentView, APDelegate {
         
         if let updatedStatusSignal = updatedStatusSignal {
             self.statusDisposable.set((updatedStatusSignal |> deliverOnMainQueue).start(next: { [weak self] status in
-                if let strongSelf = self {
-                    strongSelf.fetchStatus = status
-                }
+                self?.fetchStatus = status
             }))
         }
        
@@ -183,7 +179,7 @@ class ChatAudioContentView: ChatMediaContentView, APDelegate {
         
         self.fetchStatus = .Local
         progressView.state = .Play
-        checkState()
+        checkState(animated: animated)
 
     }
     
@@ -219,7 +215,7 @@ class ChatAudioContentView: ChatMediaContentView, APDelegate {
     }
     
     override func clean() {
-        fetchDisposable.dispose()
+        //fetchDisposable.dispose()
         statusDisposable.dispose()
         globalAudio?.remove(listener: self)
     }

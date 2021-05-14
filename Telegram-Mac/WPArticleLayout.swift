@@ -93,7 +93,7 @@ class WPArticleLayout: WPLayout {
                     showInstantViewGallery(context: context, medias: instantMedias, firstIndex: i, firstStableId: ChatHistoryEntryId.message(parent), parent: parent, self.table, weakParameters)
                     
                 }, showMessage: { [weak chatInteraction] _ in
-                    chatInteraction?.focusMessageId(nil, parent.id, .center(id: 0, innerId: nil, animated: true, focus: .init(focus: true), inset: 0))
+                    chatInteraction?.focusMessageId(nil, parent.id, .CenterEmpty)
                 }, isWebpage: chatInteraction.isLogInteraction, presentation: .make(for: message, account: context.account, renderType: presentation.renderType), media: media, automaticDownload: downloadSettings.isDownloable(message), autoplayMedia: autoplayMedia)
                 
                 weakParameters = parameters
@@ -170,12 +170,12 @@ class WPArticleLayout: WPLayout {
         if oldWidth != width {
             super.measure(width: width)
             
-            let maxw = max(min(320, width - 50), 230)
+            let maxw = min(320, width - 50)
             
             var contentSize:NSSize = NSMakeSize(width - insets.left, 0)
             
             if let groupLayout = groupLayout {
-                groupLayout.measure(NSMakeSize(max(contentSize.width, 260), maxw))
+                groupLayout.measure(NSMakeSize(max(contentSize.width, maxw), maxw))
                 
                 contentSize.height += groupLayout.dimensions.height + 6
                 contentSize.width = max(groupLayout.dimensions.width, contentSize.width)
@@ -188,16 +188,18 @@ class WPArticleLayout: WPLayout {
                 case let .wallpaper(_, _, preview):
                     switch preview {
                     case let .slug(_, settings):
-                        var patternIntensity: CGFloat = 0.5
-                        
-                        let color = settings.color ?? NSColor(rgb: 0xd6e2ee, alpha: 0.5).argb
-                        if let intensity = settings.intensity {
-                            patternIntensity = CGFloat(intensity) / 100.0
-                        }
-                        if let bottomColor = settings.bottomColor {
-                            emptyColor = .gradient(top: NSColor(argb: color).withAlphaComponent(patternIntensity), bottom: NSColor(rgb: bottomColor).withAlphaComponent(patternIntensity), rotation: settings.rotation)
-                        } else {
-                            emptyColor = .color(NSColor(argb: color))
+                        if settings.color != nil {
+                            var patternIntensity: CGFloat = 0.5
+                            
+                            let color = settings.color ?? NSColor(rgb: 0xd6e2ee, alpha: 0.5).argb
+                            if let intensity = settings.intensity {
+                                patternIntensity = CGFloat(intensity) / 100.0
+                            }
+                            if let bottomColor = settings.bottomColor {
+                                emptyColor = .gradient(top: NSColor(argb: color).withAlphaComponent(patternIntensity), bottom: NSColor(rgb: bottomColor).withAlphaComponent(patternIntensity), rotation: settings.rotation)
+                            } else {
+                                emptyColor = .color(NSColor(argb: color))
+                            }
                         }
                     case .color:
                         isColor = true
@@ -210,14 +212,15 @@ class WPArticleLayout: WPLayout {
             }
             
             if let imageSize = imageSize, isFullImageSize {
+                
                 if isTheme {
-                    contrainedImageSize = imageSize
+                    contrainedImageSize = imageSize.fitted(NSMakeSize(maxw, maxw))
                 } else {
                     contrainedImageSize = imageSize.fitted(NSMakeSize(min(width - insets.left, maxw), maxw))
                 }
               //  if presentation.renderType == .bubble {
                 if isColor {
-                    contrainedImageSize = imageSize
+                    contrainedImageSize = imageSize.fitted(NSMakeSize(maxw, maxw))
                 } else if !isTheme  {
                     contrainedImageSize.width = max(contrainedImageSize.width, maxw)
                 }
@@ -232,7 +235,7 @@ class WPArticleLayout: WPLayout {
             } else {
                 if let _ = imageSize {
                     contrainedImageSize = NSMakeSize(54, 54)
-                    textLayout?.cutout = TextViewCutout(position: .TopRight, size: NSMakeSize(contrainedImageSize.width + 16, contrainedImageSize.height + 10))
+                    textLayout?.cutout = TextViewCutout(topRight: NSMakeSize(contrainedImageSize.width + 16, contrainedImageSize.height + 10))
                 }
             }
             

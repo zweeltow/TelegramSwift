@@ -142,7 +142,7 @@ private enum DeveloperEntry : TableItemListNodeEntry {
     
 }
 
-private func developerEntries() -> [DeveloperEntry] {
+private func developerEntries(loginSettings: LoggingSettings) -> [DeveloperEntry] {
     var entries:[DeveloperEntry] = []
     
     var sectionId:Int32 = 1
@@ -155,7 +155,7 @@ private func developerEntries() -> [DeveloperEntry] {
     entries.append(.section(sectionId))
     sectionId += 1
     
-    entries.append(.toggleLogs(sectionId: sectionId, enabled: UserDefaults.standard.bool(forKey: "enablelogs")))
+    entries.append(.toggleLogs(sectionId: sectionId, enabled: loginSettings.logToFile))
     
     entries.append(.openLogs(sectionId: sectionId))
     
@@ -197,7 +197,7 @@ class DeveloperViewController: TableViewController {
             filePanel(with: ["palette"], allowMultiple: false, for: mainWindow, completion: { list in
                 if let path = list?.first {
                     if let theme = importPalette(path) {
-                        let palettesDir = "~/Library/Group Containers/\(ApiEnvironment.group)/Palettes/".nsstring.expandingTildeInPath
+                        let palettesDir = ApiEnvironment.containerURL!.appendingPathComponent("Palettes").path
                         try? FileManager.default.createDirectory(atPath: palettesDir, withIntermediateDirectories: true, attributes: nil)
                         try? FileManager.default.removeItem(atPath: palettesDir + "/" + path.nsstring.lastPathComponent)
                         try? FileManager.default.copyItem(atPath: path, toPath: palettesDir + "/" + path.nsstring.lastPathComponent)
@@ -211,24 +211,24 @@ class DeveloperViewController: TableViewController {
             })
         }, exportColors: {
             exportPalette(palette: theme.colors)
-        }, toggleLogs: { _ in
-            let enabled = !UserDefaults.standard.bool(forKey: "enablelogs")
+        }, toggleLogs: { enabled in
             MTLogSetEnabled(enabled)
-            UserDefaults.standard.set(enabled, forKey: "enablelogs")
+            _ = updateLoggingSettings(accountManager: context.sharedContext.accountManager, {
+                $0.withUpdatedLogToFile(enabled)
+            }).start()
             Logger.shared.logToConsole = false
             Logger.shared.logToFile = enabled
         }, navigateToLogs: {
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: "~/Library/Group Containers/\(ApiEnvironment.group)/logs".nsstring.expandingTildeInPath)])
+            NSWorkspace.shared.activateFileViewerSelecting([ApiEnvironment.containerURL!.appendingPathComponent("logs")])
         }, addAccount: {
             let testingEnvironment = NSApp.currentEvent?.modifierFlags.contains(.command) == true
             context.sharedContext.beginNewAuth(testingEnvironment: testingEnvironment)
         })
         
-        let signal = combineLatest(queue: prepareQueue, context.account.postbox.preferencesView(keys: [ApplicationSpecificPreferencesKeys.chatListSettings]), appearanceSignal)
+        let signal = combineLatest(queue: prepareQueue, context.sharedContext.accountManager.sharedData(keys: [SharedDataKeys.loggingSettings]), appearanceSignal)
         
         genericView.merge(with: signal |> map { preferences, appearance in
-            
-            let entries = developerEntries().map{AppearanceWrapperEntry(entry: $0, appearance: appearance)}
+            let entries = developerEntries(loginSettings: preferences.entries[SharedDataKeys.loggingSettings] as? LoggingSettings ?? LoggingSettings.defaultSettings).map{AppearanceWrapperEntry(entry: $0, appearance: appearance)}
             return prepareTransition(left: previousEntries.swap(entries), right: entries, initialSize: initialSize.modify({$0}), arguments: arguments)
         } |> deliverOnMainQueue)
         

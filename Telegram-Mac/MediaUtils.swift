@@ -35,10 +35,28 @@ final class ImageRenderData {
     }
 }
 
+private let progressiveRangeMap: [(Int, [Int])] = [
+    (100, [0]),
+    (400, [1]),
+    (400, [3]),
+    (600, [4]),
+    (Int(Int32.max), [2, 3, 4])
+]
 
-func chatMessageFileStatus(account: Account, file: TelegramMediaFile, approximateSynchronousValue: Bool = false) -> Signal<MediaResourceStatus, NoError> {
+func chatMessageFileStatus(account: Account, file: TelegramMediaFile, approximateSynchronousValue: Bool = false, useVideoThumb: Bool = false) -> Signal<MediaResourceStatus, NoError> {
     if let _ = file.resource as? LocalFileReferenceMediaResource {
         return .single(.Local)
+    }
+    if useVideoThumb, let videoThumb = file.videoThumbnails.first {
+        return combineLatest(account.postbox.mediaBox.resourceStatus(file.resource, approximateSynchronousValue: approximateSynchronousValue), account.postbox.mediaBox.resourceStatus(videoThumb.resource, approximateSynchronousValue: approximateSynchronousValue)) |> map { file, thumb in
+            switch thumb {
+            case .Local, .Fetching:
+                return thumb
+            default:
+                return file
+            }
+        }
+      //  return account.postbox.mediaBox.resourceStatus(videoThumb.resource, approximateSynchronousValue: approximateSynchronousValue)
     }
     return account.postbox.mediaBox.resourceStatus(file.resource, approximateSynchronousValue: approximateSynchronousValue)
 }
@@ -59,9 +77,104 @@ func smallestImageRepresentation(_ representation:[TelegramMediaImageRepresentat
     return representation.first
 }
 
+public func representationFetchRangeForDisplayAtSize(representation: TelegramMediaImageRepresentation, dimension: Int?) -> Range<Int>? {
+    if representation.progressiveSizes.count > 1, let dimension = dimension {
+        var largestByteSize = Int(representation.progressiveSizes[0])
+        for (maxDimension, byteSizes) in progressiveRangeMap {
+            largestByteSize = Int(representation.progressiveSizes[min(representation.progressiveSizes.count - 1, byteSizes.last!)])
+            if maxDimension >= dimension {
+                break
+            }
+        }
+        return 0 ..< largestByteSize
+    }
+    return nil
+}
 
-//
-func chatMessagePhotoDatas(postbox: Postbox, imageReference: ImageMediaReference, fullRepresentationSize: CGSize = CGSize(width: 1280.0, height: 1280.0), autoFetchFullSize: Bool = false, tryAdditionalRepresentations: Bool = false, synchronousLoad: Bool = false, secureIdAccessContext: SecureIdAccessContext? = nil, peer: Peer? = nil) -> Signal<ImageRenderData, NoError> {
+func chatMessagePhotoDatas(postbox: Postbox, imageReference: ImageMediaReference, fullRepresentationSize: CGSize = CGSize(width: 1280.0, height: 1280.0), autoFetchFullSize: Bool = false, tryAdditionalRepresentations: Bool = false, synchronousLoad: Bool = false, secureIdAccessContext: SecureIdAccessContext? = nil, peer: Peer? = nil, useMiniThumbnailIfAvailable: Bool = false) -> Signal<ImageRenderData, NoError> {
+    
+    if let progressiveRepresentation = progressiveImageRepresentation(imageReference.media.representations), progressiveRepresentation.progressiveSizes.count > 1 {
+        enum SizeSource {
+            case miniThumbnail(data: Data)
+            case image(size: Int)
+        }
+        
+        var sources: [SizeSource] = []
+        if let miniThumbnail = imageReference.media.immediateThumbnailData.flatMap(decodeTinyThumbnail) {
+            sources.append(.miniThumbnail(data: miniThumbnail))
+        }
+        let thumbnailByteSize = Int(progressiveRepresentation.progressiveSizes[0])
+        var largestByteSize = Int(progressiveRepresentation.progressiveSizes[0])
+        for (maxDimension, byteSizes) in progressiveRangeMap {
+            if Int(fullRepresentationSize.width) > 100 && maxDimension <= 100 {
+                continue
+            }
+            sources.append(contentsOf: byteSizes.compactMap { sizeIndex -> SizeSource? in
+                if progressiveRepresentation.progressiveSizes.count - 1 < sizeIndex {
+                    return nil
+                }
+                return .image(size: Int(progressiveRepresentation.progressiveSizes[sizeIndex]))
+            })
+            largestByteSize = Int(progressiveRepresentation.progressiveSizes[min(progressiveRepresentation.progressiveSizes.count - 1, byteSizes.last!)])
+            if maxDimension >= Int(fullRepresentationSize.width) {
+                break
+            }
+        }
+
+
+        
+        return Signal { subscriber in
+            let signals: [Signal<(SizeSource, Data?), NoError>] = sources.map { source -> Signal<(SizeSource, Data?), NoError> in
+                switch source {
+                case let .miniThumbnail(data):
+                    return .single((source, data))
+                case let .image(size):
+                    return postbox.mediaBox.resourceData(progressiveRepresentation.resource, size: Int(progressiveRepresentation.progressiveSizes.last!), in: 0 ..< size, mode: .incremental, notifyAboutIncomplete: true, attemptSynchronously: synchronousLoad)
+                    |> map { (data, _) -> (SizeSource, Data?) in
+                        return (source, data)
+                    }
+                }
+            }
+            
+            let dataDisposable = combineLatest(signals).start(next: { results in
+                var foundData = false
+                loop: for i in (0 ..< results.count).reversed() {
+                    let isLastSize = i == results.count - 1
+                    switch results[i].0 {
+                    case .image:
+                        if let data = results[i].1, data.count != 0 {
+                            subscriber.putNext(ImageRenderData(nil, data, isLastSize))
+                            foundData = true
+                            if isLastSize {
+                                subscriber.putCompletion()
+                            }
+                            break loop
+                        }
+                    case let .miniThumbnail(thumbnailData):
+                        subscriber.putNext(ImageRenderData(thumbnailData, nil, false))
+                        foundData = true
+                        break loop
+                    }
+                }
+                if !foundData {
+                    subscriber.putNext(ImageRenderData(nil, nil, false))
+                }
+            })
+            var fetchDisposable: Disposable?
+            if autoFetchFullSize {
+                fetchDisposable = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: imageReference.resourceReference(progressiveRepresentation.resource), range: (0 ..< largestByteSize, .default), statsCategory: .image).start()
+            } else if useMiniThumbnailIfAvailable {
+                fetchDisposable = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: imageReference.resourceReference(progressiveRepresentation.resource), range: (0 ..< thumbnailByteSize, .default), statsCategory: .image).start()
+            }
+            
+            return ActionDisposable {
+                dataDisposable.dispose()
+                fetchDisposable?.dispose()
+            }
+        }
+    }
+
+    
     if let smallestRepresentation = smallestImageRepresentation(imageReference.media.representations), let largestRepresentation = imageReference.media.representationForDisplayAtSize(PixelDimensions(fullRepresentationSize)) {
         
         
@@ -122,7 +235,9 @@ func chatMessagePhotoDatas(postbox: Postbox, imageReference: ImageMediaReference
                         } else {
                             let fetchedDisposable = fetchedThumbnail.start()
                             let thumbnailDisposable = postbox.mediaBox.resourceData(smallestRepresentation.resource, attemptSynchronously: synchronousLoad).start(next: { next in
-                                subscriber.putNext(next.size == 0 ? nil : try? Data(contentsOf: URL(fileURLWithPath: next.path), options: []))
+                                if next.complete {
+                                    subscriber.putNext(next.size == 0 ? nil : try? Data(contentsOf: URL(fileURLWithPath: next.path), options: []))
+                                }
                             }, error: subscriber.putError, completed: subscriber.putCompletion)
 
                             return ActionDisposable {
@@ -291,18 +406,28 @@ func chatGalleryPhoto(account: Account, imageReference: ImageMediaReference, toR
             options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailFromImageAlways as String)
             options.setValue(false as NSNumber, forKey: kCGImageSourceShouldCache as String)
             options.setValue(false as NSNumber, forKey: kCGImageSourceShouldCacheImmediately as String)
+            options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailWithTransform as String)
 
+            
+            
             if let fullSizeData = fullSizeData {
-                if data.fullSizeComplete {
+                if data.fullSizeData != nil {
                     if let imageSource = CGImageSourceCreateWithData(fullSizeData as CFData, options), let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) {
-                        return image
+                        return generateImage(image.size, contextGenerator: { (size, ctx) in
+                            ctx.setFillColor(theme.colors.transparentBackground.cgColor)
+                            ctx.fill(NSMakeRect(0, 0, size.width, size.height))
+                            ctx.draw(image, in: NSMakeRect(0, 0, size.width, size.height))
+                        })
+                        
                     }
                     
                 }
             }
             
+            options.setValue(150 as NSNumber, forKey: kCGImageSourceThumbnailMaxPixelSize as String)
+
             var thumbnailImage: CGImage?
-            if let thumbnailData = thumbnailData, let imageSource = CGImageSourceCreateWithData(thumbnailData as CFData, options), let image = CGImageSourceCreateImageAtIndex(imageSource, 0, options as CFDictionary) {
+            if let thumbnailData = thumbnailData, let imageSource = CGImageSourceCreateWithData(thumbnailData as CFData, options), let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) {
                 thumbnailImage = image
             }
             
@@ -322,7 +447,7 @@ func chatGalleryPhoto(account: Account, imageReference: ImageMediaReference, toR
                 
             }
             return generateImage(fittedSize, contextGenerator: { (size, ctx) in
-                ctx.setFillColor(theme.colors.background.cgColor)
+                ctx.setFillColor(theme.colors.transparentBackground.cgColor)
                 ctx.fill(NSMakeRect(0, 0, size.width, size.height))
             })
             
@@ -330,8 +455,8 @@ func chatGalleryPhoto(account: Account, imageReference: ImageMediaReference, toR
     }
 }
 
-func chatMessagePhoto(account: Account, imageReference: ImageMediaReference, toRepresentationSize:NSSize = NSMakeSize(1280, 1280), peer: Peer? = nil, scale:CGFloat, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
-    let signal = chatMessagePhotoDatas(postbox: account.postbox, imageReference: imageReference, fullRepresentationSize: toRepresentationSize, synchronousLoad: synchronousLoad, peer: peer)
+func chatMessagePhoto(account: Account, imageReference: ImageMediaReference, toRepresentationSize:NSSize = NSMakeSize(1280, 1280), peer: Peer? = nil, scale:CGFloat, synchronousLoad: Bool = false, autoFetchFullSize: Bool = false) -> Signal<ImageDataTransformation, NoError> {
+    let signal = chatMessagePhotoDatas(postbox: account.postbox, imageReference: imageReference, fullRepresentationSize: toRepresentationSize, autoFetchFullSize: autoFetchFullSize, synchronousLoad: synchronousLoad, peer: peer)
     
     return signal |> map { data in
         return ImageDataTransformation(data: data, execute: { arguments, data in
@@ -357,8 +482,8 @@ func chatMessagePhoto(account: Account, imageReference: ImageMediaReference, toR
                     options.setValue(max(fittedSize.width * context.scale, fittedSize.height * context.scale) as NSNumber, forKey: kCGImageSourceThumbnailMaxPixelSize as String)
                     options.setValue(false as NSNumber, forKey: kCGImageSourceShouldCache as String)
 
-                    //   options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailFromImageAlways as String)
-                    if let imageSource = CGImageSourceCreateWithData(fullSizeData as CFData, nil), let image = CGImageSourceCreateImageAtIndex(imageSource, 0, options as CFDictionary) {
+                       options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailFromImageAlways as String)
+                    if let imageSource = CGImageSourceCreateWithData(fullSizeData as CFData, nil), let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) {
                         fullSizeImage = image
                     }
                     
@@ -376,9 +501,9 @@ func chatMessagePhoto(account: Account, imageReference: ImageMediaReference, toR
             
             let options = NSMutableDictionary()
             options[kCGImageSourceShouldCache as NSString] = false as NSNumber
-            
+            options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailFromImageAlways as String)
             var thumbnailImage: CGImage?
-            if let thumbnailData = thumbnailData, let imageSource = CGImageSourceCreateWithData(thumbnailData as CFData, options), let image = CGImageSourceCreateImageAtIndex(imageSource, 0, options) {
+            if let thumbnailData = thumbnailData, let imageSource = CGImageSourceCreateWithData(thumbnailData as CFData, options), let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options) {
                 thumbnailImage = image
             }
             
@@ -417,7 +542,7 @@ func chatMessagePhoto(account: Account, imageReference: ImageMediaReference, toR
             }
             
             
-            context.withContext(isHighQuality: data.fullSizeData != nil, { c in
+            context.withContext(isHighQuality: data.fullSizeComplete, { c in
                 c.setBlendMode(.copy)
                 if arguments.boundingSize != arguments.imageSize {
                     switch arguments.resizeMode {
@@ -565,10 +690,10 @@ func chatMessageStickerResource(file: TelegramMediaFile, small: Bool) -> MediaRe
 
 
 
-private func chatMessageStickerDatas(postbox: Postbox, file: TelegramMediaFile, small: Bool, fetched: Bool, onlyFullSize: Bool, synchronousLoad: Bool) -> Signal<ImageRenderData, NoError> {
+private func chatMessageStickerDatas(postbox: Postbox, file: FileMediaReference, small: Bool, fetched: Bool, onlyFullSize: Bool, synchronousLoad: Bool) -> Signal<ImageRenderData, NoError> {
     
-    let thumbnailResource = chatMessageStickerResource(file: file, small: true)
-    let resource = chatMessageStickerResource(file: file, small: small)
+    let thumbnailResource = chatMessageStickerResource(file: file.media, small: true)
+    let resource = chatMessageStickerResource(file: file.media, small: small)
 
     let maybeFetched = postbox.mediaBox.cachedResourceRepresentation(resource, representation: CachedStickerAJpegRepresentation(size: small ? CGSize(width: 120.0, height: 120.0) : nil), complete: false, fetch: false, attemptSynchronously: synchronousLoad) |> runOn(synchronousLoad ? .mainQueue() : resourcesQueue)
     
@@ -581,7 +706,10 @@ private func chatMessageStickerDatas(postbox: Postbox, file: TelegramMediaFile, 
                 
                 return .single(ImageRenderData(nil, loadedData, true))
             } else {
-                let thumbnailData = postbox.mediaBox.cachedResourceRepresentation(thumbnailResource, representation: CachedStickerAJpegRepresentation(size: nil), complete: true)
+                var thumbnailData = postbox.mediaBox.cachedResourceRepresentation(thumbnailResource, representation: CachedStickerAJpegRepresentation(size: nil), complete: true) |> map(Optional.init)
+                if resource is LocalFileReferenceMediaResource {
+                    thumbnailData = .single(nil)
+                } 
                 let fullSizeData:Signal<ImageRenderData, NoError> = .single(ImageRenderData(nil, nil, false)) |> then(postbox.mediaBox.cachedResourceRepresentation(resource, representation: CachedStickerAJpegRepresentation(size: small ? CGSize(width: 120.0, height: 120.0) : nil), complete: true)
                     |> map { next in
                         return ImageRenderData(nil, !next.complete ? nil : try? Data(contentsOf: URL(fileURLWithPath: next.path), options: .mappedIfSafe), next.complete)
@@ -591,16 +719,20 @@ private func chatMessageStickerDatas(postbox: Postbox, file: TelegramMediaFile, 
                 return Signal { subscriber in
                     var fetch: Disposable?
                     if fetched {
-                        fetch = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: stickerPackFileReference(file).resourceReference(resource)).start()
+                        fetch = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: file.resourceReference(resource)).start()
                     }
 
                     var fetchThumbnail: Disposable?
                     if !thumbnailResource.id.isEqual(to: resource.id) {
-                        fetchThumbnail = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: stickerPackFileReference(file).resourceReference(thumbnailResource)).start()
+                        fetchThumbnail = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: file.resourceReference(thumbnailResource)).start()
                     }
                     let disposable = (combineLatest(thumbnailData, fullSizeData)
                         |> map { thumbnailData, fullSizeData -> ImageRenderData in
-                            return ImageRenderData(thumbnailData.complete && !fullSizeData.fullSizeComplete ? try? Data(contentsOf: URL(fileURLWithPath: thumbnailData.path)) : nil, fullSizeData.fullSizeData, fullSizeData.fullSizeComplete)
+                            if let thumbnailData = thumbnailData {
+                                return ImageRenderData(thumbnailData.complete && !fullSizeData.fullSizeComplete ? try? Data(contentsOf: URL(fileURLWithPath: thumbnailData.path)) : nil, fullSizeData.fullSizeData, fullSizeData.fullSizeComplete)
+                            } else {
+                                return fullSizeData
+                            }
                         }).start(next: { next in
                             subscriber.putNext(next)
                         }, error: { error in
@@ -661,7 +793,7 @@ private func chatMessageStickerThumbnailData(postbox: Postbox, file: TelegramMed
 }
 
 
-public func chatMessageSticker(postbox: Postbox, file: TelegramMediaFile, small: Bool, scale: CGFloat, fetched: Bool = false, onlyFullSize: Bool = false, thumbnail: Bool = false, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
+public func chatMessageSticker(postbox: Postbox, file: FileMediaReference, small: Bool, scale: CGFloat, fetched: Bool = false, onlyFullSize: Bool = false, thumbnail: Bool = false, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
     let signal: Signal<ImageRenderData, NoError>
     signal = chatMessageStickerDatas(postbox: postbox, file: file, small: small, fetched: fetched, onlyFullSize: onlyFullSize, synchronousLoad: synchronousLoad)
     return signal |> map { data in
@@ -746,24 +878,23 @@ public func chatMessageSticker(postbox: Postbox, file: TelegramMediaFile, small:
 
 
 
-private func chatMessageAnimatedStickerDatas(postbox: Postbox, file: TelegramMediaFile, small: Bool, fetched: Bool, onlyFullSize: Bool, synchronousLoad: Bool, size: NSSize) -> Signal<ImageRenderData, NoError> {
-    let thumbnailResource = chatMessageStickerResource(file: file, small: true)
-    let resource = chatMessageStickerResource(file: file, small: small)
+private func chatMessageAnimatedStickerDatas(postbox: Postbox, file: FileMediaReference, small: Bool, fetched: Bool, onlyFullSize: Bool, synchronousLoad: Bool, size: NSSize) -> Signal<ImageRenderData, NoError> {
+    let thumbnailResource = chatMessageStickerResource(file: file.media, small: true)
+    let resource = chatMessageStickerResource(file: file.media, small: small)
     
-    let maybeFetched = postbox.mediaBox.cachedResourceRepresentation(resource, representation: CachedAnimatedStickerRepresentation(thumb: small, size: size, fitzModifier: file.animatedEmojiFitzModifier), complete: false, fetch: false, attemptSynchronously: synchronousLoad) |> runOn(synchronousLoad ? .mainQueue() : resourcesQueue)
+    let maybeFetched = postbox.mediaBox.cachedResourceRepresentation(resource, representation: CachedAnimatedStickerRepresentation(thumb: small, size: size, fitzModifier: file.media.animatedEmojiFitzModifier), complete: false, fetch: false, attemptSynchronously: synchronousLoad) |> runOn(synchronousLoad ? .mainQueue() : resourcesQueue)
     
     return maybeFetched
         |> take(1)
         |> mapToSignal { maybeData in
-            if maybeData.complete {
-                let loadedData: Data? = try? Data(contentsOf: URL(fileURLWithPath: maybeData.path), options: [])
-                
+            let loadedData: Data? = try? Data(contentsOf: URL(fileURLWithPath: maybeData.path), options: [.mappedIfSafe])
+            if maybeData.complete, let loadedData = loadedData, loadedData.count > 0 {
                 return .single(ImageRenderData(nil, loadedData, true))
             } else {
-                let thumbnailData = postbox.mediaBox.cachedResourceRepresentation(thumbnailResource, representation: CachedAnimatedStickerRepresentation(thumb: true, size: size.aspectFitted(NSMakeSize(60, 60)), fitzModifier: file.animatedEmojiFitzModifier), complete: true)
+                let thumbnailData = postbox.mediaBox.cachedResourceRepresentation(thumbnailResource, representation: CachedAnimatedStickerRepresentation(thumb: true, size: size.aspectFitted(NSMakeSize(60, 60)), fitzModifier: file.media.animatedEmojiFitzModifier), complete: true)
                 
                 
-                let fullSizeData:Signal<ImageRenderData, NoError> = .single(ImageRenderData(nil, nil, false)) |> then(postbox.mediaBox.cachedResourceRepresentation(resource, representation: CachedAnimatedStickerRepresentation(thumb: false, size: size, fitzModifier: file.animatedEmojiFitzModifier), complete: true)
+                let fullSizeData:Signal<ImageRenderData, NoError> = .single(ImageRenderData(nil, nil, false)) |> then(postbox.mediaBox.cachedResourceRepresentation(resource, representation: CachedAnimatedStickerRepresentation(thumb: false, size: size, fitzModifier: file.media.animatedEmojiFitzModifier), complete: true)
                     |> map { next in
                         return ImageRenderData(nil, !next.complete ? nil : try? Data(contentsOf: URL(fileURLWithPath: next.path), options: .mappedIfSafe), next.complete)
                     })
@@ -771,12 +902,12 @@ private func chatMessageAnimatedStickerDatas(postbox: Postbox, file: TelegramMed
                 return Signal { subscriber in
                     var fetch: Disposable?
                     if fetched {
-                        fetch = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: stickerPackFileReference(file).resourceReference(resource)).start()
+                        fetch = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: file.resourceReference(resource)).start()
                     }
                     
                     var fetchThumbnail: Disposable?
                     if !thumbnailResource.id.isEqual(to: resource.id) {
-                        fetchThumbnail = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: stickerPackFileReference(file).resourceReference(thumbnailResource)).start()
+                        fetchThumbnail = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: file.resourceReference(thumbnailResource)).start()
                     }
                     let disposable = (combineLatest(thumbnailData, fullSizeData)
                         |> map { thumbnailData, fullSizeData -> ImageRenderData in
@@ -803,10 +934,10 @@ private func chatMessageAnimatedStickerDatas(postbox: Postbox, file: TelegramMed
 
 
 
-private func chatMessageAnimatedStickerThumbnailData(postbox: Postbox, file: TelegramMediaFile, synchronousLoad: Bool) -> Signal<Data?, NoError> {
-    let thumbnailResource = chatMessageStickerResource(file: file, small: true)
+private func chatMessageAnimatedStickerThumbnailData(postbox: Postbox, file: FileMediaReference, synchronousLoad: Bool) -> Signal<Data?, NoError> {
+    let thumbnailResource = chatMessageStickerResource(file: file.media, small: true)
     var size: NSSize = NSMakeSize(60, 60)
-    size = file.dimensions?.size.aspectFitted(size) ?? size
+    size = file.media.dimensions?.size.aspectFitted(size) ?? size
     let maybeFetched = postbox.mediaBox.cachedResourceRepresentation(thumbnailResource, representation: CachedAnimatedStickerRepresentation(thumb: true, size: size), complete: false, fetch: false, attemptSynchronously: synchronousLoad)
     
     return maybeFetched
@@ -819,7 +950,7 @@ private func chatMessageAnimatedStickerThumbnailData(postbox: Postbox, file: Tel
                 let thumbnailData = postbox.mediaBox.cachedResourceRepresentation(thumbnailResource, representation: CachedAnimatedStickerRepresentation(thumb: true, size: size), complete: false)
                 
                 return Signal { subscriber in
-                    let fetchThumbnail = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: stickerPackFileReference(file).resourceReference(thumbnailResource)).start()
+                    let fetchThumbnail = fetchedMediaResource(mediaBox: postbox.mediaBox, reference: file.resourceReference(thumbnailResource)).start()
                     
                     let disposable = (thumbnailData
                         |> map { thumbnailData -> Data? in
@@ -842,8 +973,99 @@ private func chatMessageAnimatedStickerThumbnailData(postbox: Postbox, file: Tel
 }
 
 
-public func chatMessageAnimatedSticker(postbox: Postbox, file: TelegramMediaFile, small: Bool, scale: CGFloat, size: NSSize, fetched: Bool = false, onlyFullSize: Bool = false, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
+public func chatMessageAnimatedSticker(postbox: Postbox, file: FileMediaReference, small: Bool, scale: CGFloat, size: NSSize, fetched: Bool = false, onlyFullSize: Bool = false, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
     let signal: Signal<ImageRenderData, NoError> = chatMessageAnimatedStickerDatas(postbox: postbox, file: file, small: small, fetched: fetched, onlyFullSize: onlyFullSize, synchronousLoad: synchronousLoad, size: size)
+    return signal |> map { data in
+        return ImageDataTransformation(data: data, execute: { arguments, data in
+            let context = DrawingContext(size: arguments.drawingSize, scale: scale, clear: arguments.emptyColor == nil)
+            
+            let drawingRect = arguments.drawingRect
+            let fittedSize = arguments.imageSize
+            let fittedRect = CGRect(origin: CGPoint(x: drawingRect.origin.x + (drawingRect.size.width - fittedSize.width) / 2.0, y: drawingRect.origin.y + (drawingRect.size.height - fittedSize.height) / 2.0), size: fittedSize)
+            //let fittedRect = arguments.drawingRect
+            
+            var fullSizeImage: CGImage?
+            if let fullSizeData = data.fullSizeData, data.fullSizeComplete {
+                if let image = NSImage(data: fullSizeData)?._cgImage {
+                    fullSizeImage = image
+                }
+            }
+            
+            var thumbnailImage: CGImage?
+            if fullSizeImage == nil, let thumbnailData = data.thumbnailData {
+                if let image = NSImage(data: thumbnailData)?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                    thumbnailImage = image
+                }
+            }
+            
+            var blurredThumbnailImage: CGImage?
+            let thumbnailInset: CGFloat = 10.0
+            if let thumbnailImage = thumbnailImage {
+                let thumbnailSize = thumbnailImage.size
+                var thumbnailContextSize = thumbnailSize.aspectFitted(CGSize(width: 150.0, height: 150.0))
+                let thumbnailDrawingSize = thumbnailContextSize
+                thumbnailContextSize.width += thumbnailInset * 2.0
+                thumbnailContextSize.height += thumbnailInset * 2.0
+                let thumbnailContext = DrawingContext(size: thumbnailContextSize, scale: 1.0, clear: true)
+                thumbnailContext.withFlippedContext(isHighQuality: false, { c in
+                    let cgImage = thumbnailImage
+                    c.setBlendMode(.normal)
+                    c.interpolationQuality = .medium
+                    
+                    c.draw(cgImage, in: CGRect(origin: CGPoint(x: thumbnailInset, y: thumbnailInset), size: thumbnailDrawingSize))
+                })
+                stickerThumbnailAlphaBlur(Int32(thumbnailContextSize.width), Int32(thumbnailContextSize.height), Int32(thumbnailContext.bytesPerRow), thumbnailContext.bytes)
+                
+                blurredThumbnailImage = thumbnailContext.generateImage()
+            }
+            
+            context.withFlippedContext(isHighQuality: data.fullSizeData != nil, { c in
+                if let color = arguments.emptyColor {
+                    c.setBlendMode(.normal)
+                    switch color {
+                    case let .color(color):
+                        c.setFillColor(color.cgColor)
+                    default:
+                        break
+                    }
+                    c.fill(drawingRect)
+                } else {
+                    c.setBlendMode(.copy)
+                }
+                
+                if let blurredThumbnailImage = blurredThumbnailImage, fullSizeImage == nil {
+                    c.interpolationQuality = .low
+                    let thumbnailScaledInset = thumbnailInset * (fittedRect.width / blurredThumbnailImage.size.width)
+                    c.draw(blurredThumbnailImage, in: fittedRect.insetBy(dx: -thumbnailScaledInset, dy: -thumbnailScaledInset))
+                }
+                
+                if let fullSizeImage = fullSizeImage {
+                    let cgImage = fullSizeImage
+                    c.setBlendMode(.normal)
+                    c.interpolationQuality = .medium
+                    
+                    c.draw(cgImage, in: fittedRect)
+                    
+                   // c.setFillColor(NSColor.random.cgColor)
+                   // c.fill(fittedRect)
+                }
+            })
+            
+            return context
+        })
+    }
+}
+
+func chatMessageSlotSticker(postbox: Postbox, value: SlotMachineValue, scale: CGFloat, size: NSSize, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
+    
+    let signal: Signal<ImageRenderData, NoError> = postbox.mediaBox.cachedResourceRepresentation(LocalFileReferenceMediaResource(localFilePath: "", randomId: 0), representation: CachedSlotMachineRepresentation(value: value, size: size), complete: true, fetch: true, attemptSynchronously: synchronousLoad) |> map { data in
+        if data.complete {
+            return ImageRenderData(nil, try? Data(contentsOf: URL(fileURLWithPath: data.path)), true)
+        } else {
+            return ImageRenderData(nil, nil, false)
+        }
+        } |> runOn(synchronousLoad ? .mainQueue() : resourcesQueue)
+    
     return signal |> map { data in
         return ImageDataTransformation(data: data, execute: { arguments, data in
             let context = DrawingContext(size: arguments.drawingSize, scale: scale, clear: arguments.emptyColor == nil)
@@ -922,12 +1144,10 @@ public func chatMessageAnimatedSticker(postbox: Postbox, file: TelegramMediaFile
     }
 }
 
-
-
-public func chatMessageDiceSticker(postbox: Postbox, file: TelegramMediaFile, value: String, scale: CGFloat, size: NSSize, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
+public func chatMessageDiceSticker(postbox: Postbox, file: TelegramMediaFile, emoji: String, value: String, scale: CGFloat, size: NSSize, synchronousLoad: Bool = false) -> Signal<ImageDataTransformation, NoError> {
     
     
-    let signal: Signal<ImageRenderData, NoError> = postbox.mediaBox.cachedResourceRepresentation(file.resource, representation: CachedDiceRepresentation(value: value, size: size), complete: false, fetch: true, attemptSynchronously: synchronousLoad) |> map { data in
+    let signal: Signal<ImageRenderData, NoError> = postbox.mediaBox.cachedResourceRepresentation(file.resource, representation: CachedDiceRepresentation(emoji: emoji, value: value, size: size), complete: true, fetch: true, attemptSynchronously: synchronousLoad) |> map { data in
         if data.complete {
             return ImageRenderData(nil, try? Data(contentsOf: URL(fileURLWithPath: data.path)), true)
         } else {
@@ -1286,7 +1506,11 @@ func chatWebpageSnippetPhoto(account: Account, imageReference: ImageMediaReferen
 
 func chatMessagePhotoStatus(account: Account, photo: TelegramMediaImage, approximateSynchronousValue: Bool = false) -> Signal<MediaResourceStatus, NoError> {
     if let largestRepresentation = photo.representationForDisplayAtSize(PixelDimensions(1280, 1280)) {
-        return account.postbox.mediaBox.resourceStatus(largestRepresentation.resource, approximateSynchronousValue: approximateSynchronousValue)
+        if largestRepresentation.resource is LocalFileReferenceMediaResource {
+            return .single(.Local)
+        } else {
+            return account.postbox.mediaBox.resourceStatus(largestRepresentation.resource, approximateSynchronousValue: approximateSynchronousValue)
+        }
     } else {
         return .never()
     }
@@ -1384,8 +1608,6 @@ private func chatMessageVideoDatas(postbox: Postbox, fileReference: FileMediaRef
                 loadedData = try? Data(contentsOf: URL(fileURLWithPath: maybeData.path), options: [])
                 return .single(ImageRenderData(nil, loadedData, true))
             } else {
-                
-                
                 let decodedThumbnailData = fileReference.media.immediateThumbnailData.flatMap(decodeTinyThumbnail)
                 let fetchedThumbnail: Signal<FetchResourceSourceType, NoError>
                 if let smallestRepresentation = smallestImageRepresentation(fileReference.media.previewRepresentations) {
@@ -1393,8 +1615,6 @@ private func chatMessageVideoDatas(postbox: Postbox, fileReference: FileMediaRef
                 } else {
                     fetchedThumbnail = .complete()
                 }
-                
-                
                 
                 let mainThumbnail = Signal<ImageRenderData, NoError> { subscriber in
                     if let decodedThumbnailData = decodedThumbnailData {
@@ -1407,7 +1627,7 @@ private func chatMessageVideoDatas(postbox: Postbox, fileReference: FileMediaRef
                         thumbnailDisposable = postbox.mediaBox.resourceData(smallestRepresentation.resource, attemptSynchronously: synchronousLoad).start(next: { next in
                             subscriber.putNext(ImageRenderData(!next.complete ? decodedThumbnailData : try? Data(contentsOf: URL(fileURLWithPath: next.path), options: []), nil, !next.complete))
                         }, error: subscriber.putError, completed: subscriber.putCompletion)
-                    } else {
+                    } else if decodedThumbnailData == nil {
                         subscriber.putNext(ImageRenderData(nil, nil, true))
                     }
                    
@@ -1608,7 +1828,7 @@ func chatSecretMessageVideo(account: Account, fileReference: FileMediaReference,
                 }
             }
             
-            context.withContext { c in
+            context.withContext({ c in
                 c.setBlendMode(.copy)
                 if arguments.imageSize.width < arguments.boundingSize.width || arguments.imageSize.height < arguments.boundingSize.height {
                     //c.setFillColor(NSColor(white: 0.0, alpha: 0.4).cgColor)
@@ -1627,7 +1847,7 @@ func chatSecretMessageVideo(account: Account, fileReference: FileMediaReference,
                 if !arguments.insets.right.isEqual(to: 0.0) {
                     c.clear(CGRect(origin: CGPoint(x: context.size.width - arguments.insets.right, y: 0.0), size: CGSize(width: arguments.insets.right, height: context.size.height)))
                 }
-            }
+            })
             
             addCorners(context, arguments: arguments, scale: scale)
             
@@ -2210,37 +2430,31 @@ public func putToTemp(image:NSImage, compress: Bool = true) -> Signal<String, No
     return Signal { (subscriber) in
 
         
-     //   let data:Data? = image.tiffRepresentation(using: .jpeg, factor: compress ? 0.83 : 1)
-        if let data = image.tiffRepresentation(using: compress ? .jpeg : .none, factor: compress ? 0.83 : 1.0) {
-            let path = NSTemporaryDirectory() + "tg_image_\(arc4random()).jpeg"
-            if compress {
-                let imageRep = NSBitmapImageRep(data: data)
-                try? imageRep?.representation(using: .jpeg, properties: [:])?.write(to: URL(fileURLWithPath: path))
-            } else {
-               // try? data.write(to: URL(fileURLWithPath: path))
-                
-                
-                let options = NSMutableDictionary()
-                
-                let mutableData: CFMutableData = NSMutableData() as CFMutableData
-                
-                if let colorDestination = CGImageDestinationCreateWithData(mutableData, kUTTypeJPEG, 1, nil) {
-                    CGImageDestinationAddImage(colorDestination, image.cgImage(forProposedRect: nil, context: nil, hints: nil)!, options as CFDictionary)
-                    if CGImageDestinationFinalize(colorDestination) {
-                        try? (mutableData as Data).write(to: URL(fileURLWithPath: path))
-                    }
-                }
-
+        let path = NSTemporaryDirectory() + "tg_image_\(arc4random()).jpeg"
+        if compress {
+            if let data = compressImageToJPEG(image.cgImage(forProposedRect: nil, context: nil, hints: nil)!, quality: compress ? 0.83 : 1.0) {
+                let path = NSTemporaryDirectory() + "tg_image_\(arc4random()).jpeg"
+                try? data.write(to: URL(fileURLWithPath: path))
+                subscriber.putNext(path)
             }
-           
-
-            
-
-            subscriber.putNext(path)
+        } else {
+            let options = NSMutableDictionary()
+            let mutableData: CFMutableData = NSMutableData() as CFMutableData
+            if let colorDestination = CGImageDestinationCreateWithData(mutableData, kUTTypeJPEG, 1, nil) {
+                CGImageDestinationAddImage(colorDestination, image.cgImage(forProposedRect: nil, context: nil, hints: nil)!, options as CFDictionary)
+                if CGImageDestinationFinalize(colorDestination) {
+                    try? (mutableData as Data).write(to: URL(fileURLWithPath: path))
+                    subscriber.putNext(path)
+                }
+            }
         }
         
-        
+       
+            
 
+        
+        
+        
         
         subscriber.putCompletion()
         
@@ -2430,11 +2644,14 @@ func chatMessageImageFile(account: Account, fileReference: FileMediaReference, p
             
             if let fullSizeData = data.fullSizeData {
                 let options = NSMutableDictionary()
+               // options.setValue(max(fittedSize.width * 3, fittedSize.height * 3) as NSNumber, forKey: kCGImageSourceThumbnailMaxPixelSize as String)
                 options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailFromImageAlways as String)
+                options.setValue(false as NSNumber, forKey: kCGImageSourceShouldCache as String)
+                options.setValue(false as NSNumber, forKey: kCGImageSourceShouldCacheImmediately as String)
                 options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailWithTransform as String)
-                options[kCGImageSourceShouldCache as NSString] = false as NSNumber
+
                 if let imageSource = CGImageSourceCreateWithData(fullSizeData as CFData, options) {
-                    if let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options) {
+                    if let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) {
                         fullSizeImage = image
                     } else if let image = CGImageSourceCreateImageAtIndex(imageSource, 0, options) {
                         fullSizeImage = image
@@ -2443,11 +2660,15 @@ func chatMessageImageFile(account: Account, fileReference: FileMediaReference, p
             }
             
             let options = NSMutableDictionary()
-            options[kCGImageSourceShouldCache as NSString] = false as NSNumber
+          //  options.setValue(max(fittedSize.width * 3, fittedSize.height * 3) as NSNumber, forKey: kCGImageSourceThumbnailMaxPixelSize as String)
+            options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailFromImageAlways as String)
+            options.setValue(false as NSNumber, forKey: kCGImageSourceShouldCache as String)
+            options.setValue(false as NSNumber, forKey: kCGImageSourceShouldCacheImmediately as String)
+            options.setValue(true as NSNumber, forKey: kCGImageSourceCreateThumbnailWithTransform as String)
 
             
             var thumbnailImage: CGImage?
-            if let thumbnailData = data.thumbnailData, let imageSource = CGImageSourceCreateWithData(thumbnailData as CFData, options), let image = CGImageSourceCreateImageAtIndex(imageSource, 0, options) {
+            if let thumbnailData = data.thumbnailData, let imageSource = CGImageSourceCreateWithData(thumbnailData as CFData, options), let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options) {
                 thumbnailImage = image
             }
             
@@ -3332,7 +3553,7 @@ func prepareTextAttachments(_ attachments: [NSTextAttachment]) -> Signal<[URL], 
                     subscriber.putCompletion()
                     return
                 }
-                if let fileWrapper = attachment.fileWrapper {
+                if let fileWrapper = attachment.fileWrapper, fileWrapper.isRegularFile {
                     if let data = fileWrapper.regularFileContents {
                         if let fileName = fileWrapper.filename {
                             let path = NSTemporaryDirectory() + fileName

@@ -22,7 +22,7 @@ class LAnimationButton: Button {
         }
     }
     private let offset: NSSize
-    
+    var updateIfWindowChanged: Bool = true
     var played = false
     var completion: (() -> Void)?
 
@@ -32,23 +32,27 @@ class LAnimationButton: Button {
     init(animation: String, size: NSSize, keysToColor: [String]? = nil, color: NSColor = .black, offset: NSSize = NSMakeSize(0, 0), autoplaySide: LButtonAutoplaySide? = nil, rotated: Bool = false) {
         self.offset = offset
         self.autoplayOnVisibleSide = autoplaySide
-        if let file = Bundle.main.path(forResource: animation, ofType: "json"), let data = try? Data(contentsOf: URL(fileURLWithPath: file)) {
-            self.animation = LottieAnimation(compressed: data, key: .init(key: .bundle(animation), size: size), cachePurpose: .none, playPolicy: .once, maximumFps: 60)
-            self.firstFrame = LottieAnimation(compressed: data, key: .init(key: .bundle(animation), size: size), cachePurpose: .none, playPolicy: .framesCount(1), maximumFps: 60)
-        } else {
-            self.animation = nil
-            self.firstFrame = nil
-        }
+        
         animationView.setFrameSize(size)
         super.init(frame: NSMakeRect(0, 0, size.width, size.height))
         addSubview(animationView)
-        if keysToColor != nil {
-            self.set(keysToColor: keysToColor, color: color)
-        }
+        
+        setAnimationName(animation, keysToColor: keysToColor, color: color)
         
         if rotated {
            // animationView.rotate(byDegrees: 180)
         }
+    }
+    
+    func setAnimationName(_ animation: String, keysToColor: [String]? = nil, color: NSColor = .black) {
+        if let file = Bundle.main.path(forResource: animation, ofType: "json"), let data = try? Data(contentsOf: URL(fileURLWithPath: file)) {
+            self.animation = LottieAnimation(compressed: data, key: .init(key: .bundle(animation), size: frame.size), cachePurpose: .none, playPolicy: .once, maximumFps: 60)
+            self.firstFrame = LottieAnimation(compressed: data, key: .init(key: .bundle(animation), size: frame.size), cachePurpose: .none, playPolicy: .framesCount(1), maximumFps: 60)
+        } else {
+            self.animation = nil
+            self.firstFrame = nil
+        }
+        set(keysToColor: keysToColor, color: color)
     }
     
     func set(keysToColor: [String]? = nil, color: NSColor = .black) {
@@ -69,10 +73,12 @@ class LAnimationButton: Button {
     
     
     override func viewDidMoveToWindow() {
-        if window == nil {
-            animationView.set(nil)
-        } else {
-            animationView.set(self.firstFrame)
+        if updateIfWindowChanged {
+            if window == nil {
+                animationView.set(nil)
+            } else {
+                animationView.set(self.firstFrame)
+            }
         }
     }
     

@@ -117,7 +117,7 @@ private class StickersModalView : View {
             let attr = NSMutableAttributedString()
             
             _ = attr.append(string: info.title, color: theme.colors.text, font: .medium(16.0))
-            attr.detectLinks(type: [.Mentions], context: arguments.context, color: .accent, openInfo: { (peerId, _, _, _) in
+            attr.detectLinks(type: [.Mentions], context: arguments.context, color: theme.colors.accent, openInfo: { (peerId, _, _, _) in
                 _ = (arguments.context.account.postbox.loadedPeerWithId(peerId) |> deliverOnMainQueue).start(next: { peer in
                     arguments.close()
                     if peer.isUser || peer.isBot {
@@ -224,7 +224,7 @@ class StickerPackPreviewModalController: ModalViewController {
                 if let slowMode = interactions.presentation.slowMode, slowMode.hasLocked {
                     showSlowModeTimeoutTooltip(slowMode, for: view)
                 } else {
-                    interactions.sendAppFile(media, false)
+                    interactions.sendAppFile(media, false, nil)
                     self?.close()
                 }
             }
@@ -268,7 +268,7 @@ class StickerPackPreviewModalController: ModalViewController {
         super.viewDidLoad()
         
         
-        disposable.set((loadedStickerPack(postbox: context.account.postbox, network: context.account.network, reference: reference, forceActualized: false) |> deliverOnMainQueue).start(next: { [weak self] result in
+        disposable.set((loadedStickerPack(postbox: context.account.postbox, network: context.account.network, reference: reference, forceActualized: true) |> deliverOnMainQueue).start(next: { [weak self] result in
             guard let `self` = self else {return}
             switch result {
             case .none:
@@ -283,9 +283,6 @@ class StickerPackPreviewModalController: ModalViewController {
 
     }
     
-    override func becomeFirstResponder() -> Bool? {
-        return false
-    }
     
     deinit {
         disposable.dispose()

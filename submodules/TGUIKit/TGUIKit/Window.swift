@@ -7,6 +7,7 @@
 //
 
 import Cocoa
+import SwiftSignalKit
 
 public class ObervableView: NSView {
     private var listeners:[WeakReference<NSObject>] = []
@@ -61,12 +62,12 @@ public func <(lhs: HandlerPriority, rhs: HandlerPriority) -> Bool {
 }
 
 class KeyHandler : Comparable {
-    let handler:()->KeyHandlerResult
+    let handler:(NSEvent)->KeyHandlerResult
     let object:WeakReference<NSObject>
     let priority:HandlerPriority
     let modifierFlags:NSEvent.ModifierFlags?
     let date: TimeInterval
-    init(_ handler:@escaping()->KeyHandlerResult, _ object:NSObject?, _ priority:HandlerPriority, _ flags:NSEvent.ModifierFlags?) {
+    init(_ handler:@escaping(NSEvent)->KeyHandlerResult, _ object:NSObject?, _ priority:HandlerPriority, _ flags:NSEvent.ModifierFlags?) {
         self.handler = handler
         self.object = WeakReference(value: object)
         self.priority = priority
@@ -187,11 +188,11 @@ public enum SwipeHandlerResult {
 }
 
 class SwipeHandler : Comparable {
-    let handler:(SwipeDirection)->SwipeHandlerResult
+    let handler:(SwipeDirection, Bool)->SwipeHandlerResult
     let object:WeakReference<NSView>
     let priority:HandlerPriority
     
-    init(_ handler:@escaping(SwipeDirection)->SwipeHandlerResult, _ object:NSView, _ priority:HandlerPriority) {
+    init(_ handler:@escaping(SwipeDirection, Bool)->SwipeHandlerResult, _ object:NSView, _ priority:HandlerPriority) {
         self.handler = handler
         self.object = WeakReference(value: object)
         self.priority = priority
@@ -207,11 +208,13 @@ func <(lhs: SwipeHandler, rhs: SwipeHandler) -> Bool {
 
 class ResponderObserver : Comparable {
     let handler:()->NSResponder?
+    let ignoreKeys:[KeyboardKey]
     let object:WeakReference<NSObject>
     let priority:HandlerPriority
     let date: TimeInterval
-    init(_ handler:@escaping()->NSResponder?, _ object:NSObject?, _ priority:HandlerPriority) {
+    init(_ handler:@escaping()->NSResponder?, _ object:NSObject?, _ priority:HandlerPriority, _ ignoreKeys: [KeyboardKey]) {
         self.handler = handler
+        self.ignoreKeys = ignoreKeys
         self.object = WeakReference(value: object)
         self.priority = priority
         self.date = Date().timeIntervalSince1970
@@ -265,7 +268,7 @@ open class Window: NSWindow {
     private var keyHandlers:[KeyboardKey:[KeyHandler]] = [:]
     private var swipeHandlers:[SwipeIdentifier: SwipeHandler] = [:]
     private var swipeState:[SwipeIdentifier: SwipeDirection] = [:]
-
+    public var keyUpHandler:((NSEvent)->Void)?
     private var responsders:[ResponderObserver] = []
     private var mouseHandlers:[UInt:[MouseObserver]] = [:]
     private var swipePoints:[NSPoint] = []
@@ -276,9 +279,40 @@ open class Window: NSWindow {
     public var orderOutHandler:(()->Void)? = nil
     public weak var rootViewController: ViewController?
     public var firstResponderFilter:(NSResponder?)->NSResponder? = { $0 }
+    public var onToggleFullScreen:((Bool)->Void)? = nil
     
-    public func set(responder:@escaping() -> NSResponder?, with object:NSObject?, priority:HandlerPriority) {
-        responsders.append(ResponderObserver(responder, object, priority))
+    public var isPushToTalkEquaivalent:((NSEvent)->Bool)?
+    
+    private let visibleObserver: ValuePromise<Bool> = ValuePromise(true, ignoreRepeated: true)
+
+
+    private let isKeyWindowValue: ValuePromise<Bool> = ValuePromise(false, ignoreRepeated: true)
+    public var keyWindowUpdater: Signal<Bool, NoError> {
+        return self.isKeyWindowValue.get()
+    }
+    
+    private let isFullScreenValue: ValuePromise<Bool> = ValuePromise(false, ignoreRepeated: true)
+    public var fullScreen: Signal<Bool, NoError> {
+        return self.isFullScreenValue.get()
+    }
+
+    private let occlusionStateValue: ValuePromise<NSWindow.OcclusionState> = ValuePromise(NSWindow.OcclusionState.visible, ignoreRepeated: true)
+
+    public var takeOcclusionState: Signal<NSWindow.OcclusionState, NoError> {
+        return occlusionStateValue.get()
+    }
+
+    public var visibility: Signal<Bool, NoError> {
+        return visibleObserver.get()
+    }
+    
+    open override func setIsVisible(_ flag: Bool) {
+        super.setIsVisible(flag)
+        self.visibleObserver.set(flag)
+    }
+    
+    public func set(responder:@escaping() -> NSResponder?, with object:NSObject?, priority:HandlerPriority, ignoreKeys: [KeyboardKey] = []) {
+        responsders.append(ResponderObserver(responder, object, priority, ignoreKeys + [.Escape, .LeftArrow, .RightArrow, .Tab, .UpArrow, .DownArrow]))
     }
     
     public func removeObserver(for object:NSObject) {
@@ -294,17 +328,22 @@ open class Window: NSWindow {
     }
     
     
-    public func set(handler:@escaping() -> KeyHandlerResult, with object:NSObject, for key:KeyboardKey, priority:HandlerPriority = .low, modifierFlags:NSEvent.ModifierFlags? = nil) -> Void {
+    public func set(handler:@escaping(NSEvent) -> KeyHandlerResult, with object:NSObject, for key:KeyboardKey, priority:HandlerPriority = .low, modifierFlags:NSEvent.ModifierFlags? = nil) -> Void {
         var handlers:[KeyHandler]? = keyHandlers[key]
         if handlers == nil {
             handlers = []
             keyHandlers[key] = handlers
         }
+       
         keyHandlers[key]?.append(KeyHandler(handler, object, priority, modifierFlags))
+        
+        if key == .Return {
+            set(handler: handler, with: self, for: .KeypadEnter, priority: priority, modifierFlags: modifierFlags)
+        }
         
     }
     
-    public func add(swipe handler:@escaping(SwipeDirection) -> SwipeHandlerResult, with object:NSView, identifier: SwipeIdentifier, priority:HandlerPriority = .low) -> Void {
+    public func add(swipe handler:@escaping(SwipeDirection, Bool) -> SwipeHandlerResult, with object:NSView, identifier: SwipeIdentifier, priority:HandlerPriority = .low) -> Void {
         swipeHandlers[identifier] = SwipeHandler(handler, object, priority)
     }
     
@@ -350,6 +389,9 @@ open class Window: NSWindow {
         self.swipeHandlers = self.swipeHandlers.filter { key, value in
             return value.object.value !== object && value.object.value != nil
         }
+        self.responsders = responsders.filter {
+            $0.object.value !== object
+        }
     }
     
     public func remove(object:NSObject, for key:KeyboardKey, modifierFlags: NSEvent.ModifierFlags? = nil, forceCheckFlags: Bool = false) {
@@ -364,6 +406,9 @@ open class Window: NSWindow {
                     keyHandlers[key]?.remove(at: i)
                 }
             }
+        }
+        if key == .Return {
+            self.remove(object: object, for: .KeypadEnter, modifierFlags: modifierFlags, forceCheckFlags: forceCheckFlags)
         }
     }
     
@@ -435,10 +480,16 @@ open class Window: NSWindow {
     }
     
     
-    public func applyResponderIfNeeded() ->Void {
+    public func applyResponderIfNeeded(_ event: NSEvent? = nil) ->Void {
         let sorted = responsders.sorted(by: >)
-        
+        if let event = event, event.modifierFlags.contains(.option)
+         || event.modifierFlags.contains(.control) {
+            return
+        }
         for observer in sorted {
+            if let event = event, let code = KeyboardKey(rawValue: event.keyCode), observer.ignoreKeys.contains(code) {
+                continue
+            }
             if let responder = observer.handler() {
                 if self.firstResponder != responder {
                     let _ = self.resignFirstResponder()
@@ -456,6 +507,21 @@ open class Window: NSWindow {
                 break
             }
         }
+    }
+
+    open override func keyDown(with event: NSEvent) {
+
+    }
+    open override func keyUp(with event: NSEvent) {
+
+    }
+    open override func flagsChanged(with event: NSEvent) {
+
+    }
+
+    
+    open override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        return self.isPushToTalkEquaivalent?(event) ?? super.performKeyEquivalent(with: event)
     }
     
     @available(OSX 10.12.2, *)
@@ -500,10 +566,12 @@ open class Window: NSWindow {
     
     open override func makeKeyAndOrderFront(_ sender: Any?) {
         super.makeKeyAndOrderFront(sender)
+        self.visibleObserver.set(self.isVisible)
     }
     open override func orderOut(_ sender: Any?) {
         super.orderOut(sender)
         orderOutHandler?()
+        self.visibleObserver.set(self.isVisible)
     }
     
     public func enumerateAllSubviews(callback: (NSView) -> Void) {
@@ -529,6 +597,7 @@ open class Window: NSWindow {
         } else {
             super.close()
         }
+        self.visibleObserver.set(self.isVisible)
     }
     
     private func scrollDeltaXAfterInvertion(_ value: CGFloat) -> CGFloat {
@@ -548,7 +617,7 @@ open class Window: NSWindow {
             for (key, swipe) in swipeHandlers.sorted(by: { $0.value.priority > $1.value.priority }) {
                 if let view = swipe.object.value, view._mouseInside() {
                     if scrollDeltaXAfterInvertion(event.scrollingDeltaX) > 0 {
-                        let result = swipe.handler(.left(.start(controller: ViewController())))
+                        let result = swipe.handler(.left(.start(controller: ViewController())), true)
                         switch result {
                         case let .success(controller):
                             swipeState[key] = .left(.start(controller: controller))
@@ -557,7 +626,7 @@ open class Window: NSWindow {
                             break
                         }
                     } else {
-                        let result = swipe.handler(.right(.start(controller: ViewController())))
+                        let result = swipe.handler(.right(.start(controller: ViewController())), true)
                         switch result {
                         case let .success(controller):
                             swipeState[key] = .right(.start(controller: controller))
@@ -574,7 +643,7 @@ open class Window: NSWindow {
     private func stopSwiping(_ event: NSEvent) {
         for (key, swipe) in swipeState {
             if let handler = swipeHandlers[key], let view = handler.object.value {
-                _ = handler.handler(swipe.withUpdatedSuccessOrFail(view.frame.width))
+                _ = handler.handler(swipe.withUpdatedSuccessOrFail(view.frame.width), true)
             }
         }
         swipeState.removeAll()
@@ -582,12 +651,13 @@ open class Window: NSWindow {
     
     
     private func proccessSwiping(_ event: NSEvent) -> Void {
-        for (key, swipe) in swipeState {
+        let copy = self.swipeState
+        for (key, swipe) in copy {
             if let handler = swipeHandlers[key], let value = handler.object.value, value._mouseInside() {
                 let deltaX: CGFloat = scrollDeltaXAfterInvertion(event.scrollingDeltaX)
                 
                 let newState = swipe.withAdditionalDelta(deltaX)
-                let result = handler.handler(newState)
+                let result = handler.handler(newState, true)
                 switch result {
                 case let .deltaUpdated(available):
                     swipeState[key] = swipe.withAdditionalDelta(available, true)
@@ -597,6 +667,28 @@ open class Window: NSWindow {
                 break
             }
         }
+    }
+    
+    public func abortSwiping() -> Void {
+        let copy = self.swipeState
+        for (key, swipe) in copy {
+            switch swipe {
+            case let .left(state):
+                let swipe: SwipeDirection = .left(.failed(delta: state.delta, controller: state.controller))
+                if let handler = swipeHandlers[key] {
+                    _ = handler.handler(swipe, false)
+                }
+                self.swipeState.removeValue(forKey: key)
+            case let .right(state):
+                let swipe: SwipeDirection = .right(.failed(delta: state.delta, controller: state.controller))
+                if let handler = swipeHandlers[key] {
+                    _ = handler.handler(swipe, false)
+                }
+            default:
+                break
+            }
+        }
+        self.swipeState.removeAll()
     }
     
     public var inLiveSwiping: Bool {
@@ -635,22 +727,24 @@ open class Window: NSWindow {
 //            bp += 1
 //        }
         
+        if event.type == .keyUp {
+            self.keyUpHandler?(event)
+        }
+        
         let eventType = event.type
         if sheets.isEmpty {
             if eventType == .keyDown {
                 
-                
-                if KeyboardKey(rawValue:event.keyCode) != KeyboardKey.Escape && KeyboardKey(rawValue:event.keyCode) != KeyboardKey.LeftArrow && KeyboardKey(rawValue:event.keyCode) != KeyboardKey.RightArrow && KeyboardKey(rawValue:event.keyCode) != KeyboardKey.Tab {
-                    applyResponderIfNeeded()
-                }
+                applyResponderIfNeeded(event)
                 
                 cleanUndefinedHandlers()
                 
-                if let globalHandler = keyHandlers[.All]?.sorted(by: >).first, let keyCode = KeyboardKey(rawValue:event.keyCode) {
-                    if let handle = keyHandlers[keyCode]?.sorted(by: >).first {
-                        if globalHandler.priority > handle.priority {
-                            if (handle.modifierFlags == nil || event.modifierFlags.contains(handle.modifierFlags!)) {
-                                switch globalHandler.handler() {
+                if let globalHandlers = keyHandlers[.All]?.sorted(by: >), let keyCode = KeyboardKey(rawValue:event.keyCode) {
+                    for globalHandler in globalHandlers {
+                        let handle = keyHandlers[keyCode]?.sorted(by: >).first
+                        if handle == nil || globalHandler.priority > handle!.priority {
+                            if (handle?.modifierFlags == nil || event.modifierFlags.contains(handle!.modifierFlags!)) {
+                                switch globalHandler.handler(event) {
                                 case .invoked:
                                     return
                                 case .rejected:
@@ -659,9 +753,6 @@ open class Window: NSWindow {
                                     super.sendEvent(event)
                                     return
                                 }
-                            } else {
-                                // super.sendEvent(event)
-                                // return
                             }
                         }
                     }
@@ -672,7 +763,7 @@ open class Window: NSWindow {
                         
                         if (handle.modifierFlags == nil || event.modifierFlags.contains(handle.modifierFlags!))  {
                             
-                            switch handle.handler() {
+                            switch handle.handler(event) {
                             case .invoked:
                                 return
                             case .rejected:
@@ -756,7 +847,7 @@ open class Window: NSWindow {
     //        return self.set(handler: handler, for: .V, modifierFlags: [.command])
     //    }
     
-    public func set(escape handler:@escaping() -> KeyHandlerResult, with object:NSObject, priority:HandlerPriority = .low, modifierFlags:NSEvent.ModifierFlags? = nil) -> Void {
+    public func set(escape handler:@escaping(NSEvent) -> KeyHandlerResult, with object:NSObject, priority:HandlerPriority = .low, modifierFlags:NSEvent.ModifierFlags? = nil) -> Void {
         set(handler: handler, with: object, for: .Escape, priority:priority, modifierFlags:modifierFlags)
     }
     
@@ -773,7 +864,7 @@ open class Window: NSWindow {
         return styleMask.contains(.fullScreen)
     }
     
-    public func initSaver() {
+    @discardableResult public func initSaver() -> Bool {
         self.initFromSaver = true
         self.saver = .find(for: self)
         if let saver = saver {
@@ -781,14 +872,40 @@ open class Window: NSWindow {
             if saver.isFullScreen {
                 toggleFullScreen(self)
             }
+            return true
         }
+        return false
     }
     
-    open override func toggleFullScreen(_ sender: Any?) {
+    public var processFullScreen:((Bool, @escaping(Bool)->Void)->Void)?
+    
+    private func invokeFullScreen(_ sender: Any?) {
         CATransaction.begin()
         super.toggleFullScreen(sender)
         CATransaction.commit()
         saver?.isFullScreen = isFullScreen
+    }
+    
+    open override func toggleFullScreen(_ sender: Any?) {
+        self.onToggleFullScreen?(!isFullScreen)
+        isFullScreenValue.set(!isFullScreen)
+        
+        if let process = processFullScreen {
+            process(!isFullScreen, { [weak self] value in
+                self?.invokeFullScreen(nil)
+            })
+        } else {
+            invokeFullScreen(nil)
+        }
+        
+       
+        
+    }
+    
+    public var _windowDidExitFullScreen:(()->Void)?
+    @objc func windowDidExitFullScreen(_ notification: Notification) {
+        _windowDidExitFullScreen?()
+        _windowDidExitFullScreen = nil
     }
     
     @objc func windowDidNeedSaveState(_ notification: Notification) {
@@ -807,23 +924,58 @@ open class Window: NSWindow {
     public func windowImageShot() -> CGImage? {
         return CGWindowListCreateImage(CGRect.null, [.optionIncludingWindow], CGWindowID(windowNumber), [.boundsIgnoreFraming])
     }
+
+
     
-    
+    @objc open func windowDidBecomeKey() {
+        isKeyWindowValue.set(true)
+
+    }
+
+    @objc open func windowDidResignKey() {
+        isKeyWindowValue.set(false)
+    }
+
+    /*
+     - (void)windowDidChangeOcclusionState:(NSNotification *)notification
+     {
+         if ([[notification object] occlusionState]  &  NSWindowOcclusionStateVisible) {
+             // visible
+         } else {
+             // occluded
+         }
+     }
+     */
+
+    @objc func windowDidChangeOcclusionState() {
+        occlusionStateValue.set(self.occlusionState)
+    }
 
     public override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing bufferingType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: bufferingType, defer: flag)
         
         self.acceptsMouseMovedEvents = true
-        
+        occlusionStateValue.set(self.occlusionState)
         isOpaque = true
         
         self.contentView?.acceptsTouchEvents = true
         NotificationCenter.default.addObserver(self, selector: #selector(windowDidNeedSaveState(_:)), name: NSWindow.didMoveNotification, object: self)
         NotificationCenter.default.addObserver(self, selector: #selector(windowDidNeedSaveState(_:)), name: NSWindow.didResizeNotification, object: self)
         
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidBecomeKey), name: NSWindow.didBecomeKeyNotification, object: self)
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidResignKey), name: NSWindow.didResignKeyNotification, object: self)
+
+
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidExitFullScreen(_:)), name: NSWindow.didExitFullScreenNotification, object: self)
+
         
-        
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidChangeOcclusionState), name: NSWindow.didChangeOcclusionStateNotification, object: self)
+
+
     }
     
+    public static var statusBarHeight: CGFloat {
+        return 22
+    }
 
 }

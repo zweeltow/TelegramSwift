@@ -1,5 +1,5 @@
 import Cocoa
-
+import FFMpegBinding
 import SwiftSignalKit
 import Postbox
 import TelegramCore
@@ -12,18 +12,62 @@ import LocalAuthentication
 //import WalletCore
 import OpenSSLEncryption
 import CoreSpotlight
+
 #if !APP_STORE
 import AppCenter
 import AppCenterCrashes
 #endif
 
+
+
+let enableBetaFeatures = true
+
+private(set) var appDelegate: AppDelegate?
+
 #if !SHARE
 extension Account {
     var diceCache: DiceCache? {
-        return (NSApp.delegate as? AppDelegate)?.contextValue?.context.diceCache
+        return appDelegate?.contextValue?.context.diceCache
     }
 }
 #endif
+
+
+
+private struct AutologinToken : Equatable {
+
+
+    private let token: String
+    private let domains:[String]
+
+    fileprivate init(token: String, domains: [String]) {
+        self.token = token
+        self.domains = domains
+    }
+
+    static func with(appConfiguration: AppConfiguration) -> AutologinToken? {
+        if let data = appConfiguration.data, let value = data["autologin_token"] as? String {
+            let dict:[String] = data["autologin_domains"] as? [String] ?? []
+            return AutologinToken(token: value, domains: dict)
+        } else {
+            return nil
+        }
+    }
+
+    func applyTo(_ link: String, isTestServer: Bool) -> String? {
+        let url = URL(string: link)
+        if let url = url, let host = url.host, domains.contains(host) {
+            var queryItems = [URLQueryItem(name: "autologin_token", value: self.token)]
+            if isTestServer {
+                queryItems.append(URLQueryItem(name: "_test", value: "1"))
+            }
+            var urlComps = URLComponents(string: link)!
+            urlComps.queryItems = (urlComps.queryItems ?? []) + queryItems
+            return urlComps.url?.absoluteString
+        }
+        return nil
+    }
+}
 
 
 private final class SharedApplicationContext {
@@ -46,7 +90,14 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         didSet {
             window.delegate = self
             window.isOpaque = true
-            window.initSaver()
+            let notInitial = window.initSaver()
+            
+            if !notInitial {
+                let size = NSMakeSize(700, 550)
+                if let screen = NSScreen.main {
+                    window.setFrame(NSMakeRect((screen.frame.width - size.width) / 2, (screen.frame.height - size.height) / 2, size.width, size.height), display: true)
+                }
+            }
         }
     }
     
@@ -68,7 +119,14 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     private var sharedContextOnce: Signal<SharedApplicationContext, NoError> {
         return sharedContextPromise.get() |> take(1) |> deliverOnMainQueue
     }
+    private var sharedApplicationContextValue: SharedApplicationContext?
 
+    
+    var passlock: Signal<Bool, NoError> {
+        return sharedContextPromise.get() |> mapToSignal {
+            return $0.notificationManager.passlocked
+        }
+    }
     
     fileprivate var contextValue: AuthorizedApplicationContext?
     private let context = Promise<AuthorizedApplicationContext?>()
@@ -76,12 +134,19 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     private var authContextValue: UnauthorizedApplicationContext?
     private let authContext = Promise<UnauthorizedApplicationContext?>()
 
-    
+    private var activeValue: ValuePromise<Bool> = ValuePromise(true, ignoreRepeated: true)
+
+    var isActive: Signal<Bool, NoError> {
+        return self.activeValue.get()
+    }
+    private let encryptionValue:Promise<ValueBoxEncryptionParameters> = Promise()
     
     private let handleEventContextDisposable = MetaDisposable()
     private let proxyDisposable = MetaDisposable()
     private var activity:Any?
     private var executeUrlAfterLogin: String? = nil
+    
+    private(set) var appEncryption: AppEncryptionParameters!
 
     func applicationWillFinishLaunching(_ notification: Notification) {
        
@@ -95,7 +160,10 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         
-              
+        
+        appDelegate = self
+        ApiEnvironment.migrate()
+        
         initializeSelectManager()
         startLottieCacheCleaner()
         
@@ -103,12 +171,17 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             NSApplication.shared.isAutomaticCustomizeTouchBarMenuItemEnabled = true
         }
         
-        let appGroupName = ApiEnvironment.group
-        guard let containerUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName) else {
+        
+        guard let containerUrl = ApiEnvironment.containerURL else {
             return
         }
         
+        
+        
         self.containerUrl = containerUrl.path
+        
+        TempBox.initializeShared(basePath: self.containerUrl, processType: "app", launchSpecificId: arc4random64())
+        
 
         let v = View()
         v.flip = false
@@ -138,7 +211,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         }
         
         DateUtils.setDateLocalizationFunc ({ key -> String in
-            return _NSLocalizedString(key)
+            return _NSLocalizedString(key!)
         })
         
         setInputLocalizationFunc { (key) -> String in
@@ -171,23 +244,18 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         
         #if !APP_STORE
             if let secret = Bundle.main.infoDictionary?["APPCENTER_SECRET"] as? String {
-                MSAppCenter.start(secret, withServices: [MSCrashes.self])
+                AppCenter.start(withAppSecret: secret, services: [Crashes.self])
             }
         #endif
         
         
-      //  Timer.scheduledTimer(timeInterval: 60 * 60, target: self, selector: #selector(checkUpdates), userInfo: nil, repeats: true)
-        
         Timer.scheduledTimer(timeInterval: 10, target: self, selector: #selector(saveIntermediateDate), userInfo: nil, repeats: true)
-        
-        
-        
 
         telegramUIDeclareEncodables()
         
         MTLogSetEnabled(UserDefaults.standard.bool(forKey: "enablelogs"))
 
-        let logger = Logger(basePath: containerUrl.path + "/logs")
+        let logger = Logger(rootPath: containerUrl.path, basePath: containerUrl.path + "/logs")
         logger.logToConsole = false
         logger.logToFile = UserDefaults.standard.bool(forKey: "enablelogs")
         
@@ -221,25 +289,86 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     private func launchInterface() {
         initializeAccountManagement()
         
+        let rootPath = containerUrl!
+        let window = self.window!
+        _ = System.scaleFactor.swap(window.backingScaleFactor)
+        window.minSize = NSMakeSize(380, 500)
+        
+        let appEncryption = AppEncryptionParameters(path: rootPath)
+
+        let accountManager = AccountManager(basePath: containerUrl + "/accounts-metadata", isTemporary: false, isReadOnly: false)
+
+        if let deviceSpecificEncryptionParameters = appEncryption.decrypt() {
+            let parameters = ValueBoxEncryptionParameters(forceEncryptionIfNoSet: true, key: ValueBoxEncryptionParameters.Key(data: deviceSpecificEncryptionParameters.key)!, salt: ValueBoxEncryptionParameters.Salt(data: deviceSpecificEncryptionParameters.salt)!)
+            self.launchApp(accountManager: accountManager, encryptionParameters: parameters, appEncryption: appEncryption)
+        } else {
+            
+            
+            let themeSemaphore = DispatchSemaphore(value: 0)
+            var themeSettings: ThemePaletteSettings = ThemePaletteSettings.defaultTheme
+            _ = (themeSettingsView(accountManager: accountManager) |> take(1)).start(next: { settings in
+                themeSettings = settings
+                themeSemaphore.signal()
+            })
+            themeSemaphore.wait()
+            
+            var localization: LocalizationSettings? = nil
+            let localizationSemaphore = DispatchSemaphore(value: 0)
+            _ = (accountManager.transaction { transaction in
+                localization = transaction.getSharedData(SharedDataKeys.localizationSettings) as? LocalizationSettings
+                localizationSemaphore.signal()
+            }).start()
+            localizationSemaphore.wait()
+            
+            if let localization = localization {
+                applyUILocalization(localization)
+            }
+            
+            updateTheme(with: themeSettings, for: window)
+            
+            self.window.makeKeyAndOrderFront(self)
+            
+            showModal(with: ColdStartPasslockController(checkNextValue: { passcode in
+                appEncryption.applyPasscode(passcode)
+                if let params = appEncryption.decrypt() {
+                    let parameters = ValueBoxEncryptionParameters(forceEncryptionIfNoSet: true, key: ValueBoxEncryptionParameters.Key(data: params.key)!, salt: ValueBoxEncryptionParameters.Salt(data: params.salt)!)
+                    self.launchApp(accountManager: accountManager, encryptionParameters: parameters, appEncryption: appEncryption)
+                    return true
+                } else {
+                    return false
+                }
+            }, logoutImpl: {
+                return Signal { subscriber in
+                    try? FileManager.default.removeItem(atPath: rootPath)
+                    subscriber.putCompletion()
+                    DispatchQueue.main.async {
+                        let appEncryption = AppEncryptionParameters(path: rootPath)
+                        let accountManager = AccountManager(basePath: self.containerUrl + "/accounts-metadata", isTemporary: false, isReadOnly: false)
+                        if let params = appEncryption.decrypt() {
+                            let parameters = ValueBoxEncryptionParameters(forceEncryptionIfNoSet: true, key: ValueBoxEncryptionParameters.Key(data: params.key)!, salt: ValueBoxEncryptionParameters.Salt(data: params.salt)!)
+                            self.launchApp(accountManager: accountManager, encryptionParameters: parameters, appEncryption: appEncryption)
+                        }
+                    }
+                    return EmptyDisposable
+                } |> runOn(prepareQueue)
+            }), for: window)
+        }
+    }
+    
+    private func launchApp(accountManager: AccountManager, encryptionParameters: ValueBoxEncryptionParameters, appEncryption: AppEncryptionParameters) {
+        
+        
+        self.appEncryption = appEncryption
         
         let rootPath = containerUrl!
         let window = self.window!
+        _ = System.scaleFactor.swap(window.backingScaleFactor)
         
         
         window.minSize = NSMakeSize(380, 500)
-
-        
-        let deviceSpecificEncryptionParameters = BuildConfig.deviceSpecificEncryptionParameters(rootPath, baseAppBundleId: baseAppBundleId)
-        let encryptionParameters = ValueBoxEncryptionParameters(forceEncryptionIfNoSet: true, key: ValueBoxEncryptionParameters.Key(data: deviceSpecificEncryptionParameters.key)!, salt: ValueBoxEncryptionParameters.Salt(data: deviceSpecificEncryptionParameters.salt)!)
-        
-                
-        _ = System.scaleFactor.swap(window.backingScaleFactor)
-
         
         let networkDisposable = MetaDisposable()
         
-        let accountManager = AccountManager(basePath: containerUrl + "/accounts-metadata")
-
         
         let displayUpgrade:(Float?) -> Void = { progress in
             if let progress = progress {
@@ -260,6 +389,28 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                 displayUpgrade(nil)
             }
         }, completed: {
+            
+            
+            let passcodeSemaphore = DispatchSemaphore(value: 0)
+            
+            _ = accountManager.transaction { modifier -> Void in
+                let passcode = modifier.getAccessChallengeData()
+                
+                switch passcode {
+                case let .numericalPassword(value), let .plaintextPassword(value):
+                    if !value.isEmpty {
+                        appEncryption.change(value)
+                        modifier.setAccessChallengeData(.plaintextPassword(value: ""))
+                    }
+                default:
+                    break
+                }
+                passcodeSemaphore.signal()
+            }.start()
+            passcodeSemaphore.wait()
+
+           
+            
             let themeSemaphore = DispatchSemaphore(value: 0)
             var themeSettings: ThemePaletteSettings = ThemePaletteSettings.defaultTheme
             _ = (themeSettingsView(accountManager: accountManager) |> take(1)).start(next: { settings in
@@ -280,9 +431,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             if let localization = localization {
                 applyUILocalization(localization)
             }
-            
-
-            
+                        
             updateTheme(with: themeSettings, for: window)
             
             
@@ -295,7 +444,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             _ = combineLatest(queue: .mainQueue(), themeSettingsView(accountManager: accountManager), backingProperties.get()).start(next: { settings, backingScale in
                 let previous = basicTheme.swap(settings)
                 if previous?.palette != settings.palette || previous?.bubbled != settings.bubbled || previous?.wallpaper != settings.wallpaper || previous?.fontSize != settings.fontSize || previousBackingScale != backingScale  {
-                    updateTheme(with: settings, for: window, animated: window.isKeyWindow && ((previous?.fontSize == settings.fontSize && previous?.palette != settings.palette) || previous?.bubbled != settings.bubbled || previous?.cloudTheme?.id != settings.cloudTheme?.id))
+                    updateTheme(with: settings, for: window, animated: window.isKeyWindow && ((previous?.fontSize == settings.fontSize && previous?.palette != settings.palette) || previous?.bubbled != settings.bubbled || previous?.cloudTheme?.id != settings.cloudTheme?.id || previous?.palette.isDark != settings.palette.isDark))
                     self.contextValue?.applyNewTheme()
                 }
                 previousBackingScale = backingScale
@@ -307,7 +456,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             
             let autoNightSignal = viewDidChangedAppearance.get() |> mapToSignal { _ in
                 return combineLatest(autoNightSettings(accountManager: accountManager), Signal<Void, NoError>.single(Void()) |> then( Signal<Void, NoError>.single(Void()) |> delay(60, queue: Queue.mainQueue()) |> restart))
-            } |> deliverOnMainQueue
+                } |> deliverOnMainQueue
             
             
             _ = autoNightSignal.start(next: { preference, _ in
@@ -384,9 +533,16 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                 }
             })
             
-            let networkArguments = NetworkInitializationArguments(apiId: ApiEnvironment.apiId, apiHash: ApiEnvironment.apiHash, languagesCategory: ApiEnvironment.language, appVersion: ApiEnvironment.version, voipMaxLayer: CallBridge.voipMaxLayer(), voipVersions: [CallBridge.voipVersion()], appData: .single(ApiEnvironment.appData), autolockDeadine: .single(nil), encryptionProvider: OpenSSLEncryptionProvider())
             
-            let sharedContext = SharedAccountContext(accountManager: accountManager, networkArguments: networkArguments, rootPath: rootPath, encryptionParameters: encryptionParameters, displayUpgradeProgress: displayUpgrade)
+            let voipVersions = OngoingCallContext.versions(includeExperimental: true, includeReference: false).map { version, supportsVideo -> CallSessionManagerImplementationVersion in
+                CallSessionManagerImplementationVersion(version: version, supportsVideo: supportsVideo)
+            }
+            
+            let networkArguments = NetworkInitializationArguments(apiId: ApiEnvironment.apiId, apiHash: ApiEnvironment.apiHash, languagesCategory: ApiEnvironment.language, appVersion: ApiEnvironment.version, voipMaxLayer: OngoingCallContext.maxLayer, voipVersions: voipVersions, appData: .single(ApiEnvironment.appData), autolockDeadine: .single(nil), encryptionProvider: OpenSSLEncryptionProvider())
+            
+            let sharedContext = SharedAccountContext(accountManager: accountManager, networkArguments: networkArguments, rootPath: rootPath, encryptionParameters: encryptionParameters, appEncryption: appEncryption, displayUpgradeProgress: displayUpgrade)
+            
+            self.hangKeybind(sharedContext)
             
             
             let rawAccounts = sharedContext.activeAccounts
@@ -419,17 +575,63 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                 }
                 NSApp.activate(ignoringOtherApps: true)
                 window.deminiaturize(nil)
+            }, navigateToThread: { account, threadId, fromId in
+                if let contextValue = self.contextValue, contextValue.context.account.id == account.id {
+                    
+                    let pushController: (ChatLocation, ChatMode, MessageId, Atomic<ChatLocationContextHolder?>, Bool) -> Void = { chatLocation, mode, messageId, contextHolder, addition in
+                        let navigation = contextValue.context.sharedContext.bindings.rootNavigation()
+                        let controller: ChatController
+                        if addition {
+                            controller = ChatAdditionController(context: contextValue.context, chatLocation: chatLocation, mode: mode, messageId: messageId, initialAction: nil, chatLocationContextHolder: contextHolder)
+                        } else {
+                            controller = ChatController(context: contextValue.context, chatLocation: chatLocation, mode: mode, messageId: messageId, initialAction: nil, chatLocationContextHolder: contextHolder)
+                        }
+                        navigation.push(controller)
+                    }
+                    
+                    let navigation = contextValue.context.sharedContext.bindings.rootNavigation()
+                    
+                    let currentInChat = navigation.controller is ChatController
+                    let controller = navigation.controller as? ChatController
+                    
+                    if controller?.chatInteraction.mode.threadId == threadId {
+                        controller?.scrollup()
+                    } else {
+                        
+                        let signal:Signal<ReplyThreadInfo, FetchChannelReplyThreadMessageError> = fetchAndPreloadReplyThreadInfo(context: contextValue.context, subject: .channelPost(threadId))
+                        
+                        _ = showModalProgress(signal: signal |> take(1), for: contextValue.context.window).start(next: { result in
+                            let chatLocation: ChatLocation = .replyThread(result.message)
+                            
+                            let updatedMode: ReplyThreadMode
+                            if result.isChannelPost {
+                                updatedMode = .comments(origin: fromId)
+                            } else {
+                                updatedMode = .replies(origin: fromId)
+                            }
+                            pushController(chatLocation, .replyThread(data: result.message, mode: updatedMode), fromId, result.contextHolder, currentInChat)
+                            
+                        }, error: { error in
+                            
+                        })
+                    }
+                    
+                } else {
+                    sharedContext.switchToAccount(id: account.id, action: .thread(threadId, fromId, necessary: true))
+                }
+                NSApp.activate(ignoringOtherApps: true)
+                window.deminiaturize(nil)
             }, updateCurrectController: {
                 if let contextValue = self.contextValue {
                     contextValue.context.sharedContext.bindings.rootNavigation().controller.updateController()
                 }
             })
             
-            let sharedNotificationManager = SharedNotificationManager(activeAccounts: sharedContext.activeAccounts |> map { ($0.0, $0.1.map { ($0.0, $0.1) }) }, accountManager: accountManager, window: window, bindings: notificationsBindings)
+            let sharedNotificationManager = SharedNotificationManager(activeAccounts: sharedContext.activeAccounts |> map { ($0.0, $0.1.map { ($0.0, $0.1) }) }, appEncryption: appEncryption, accountManager: accountManager, window: window, bindings: notificationsBindings)
             let sharedWakeupManager = SharedWakeupManager(sharedContext: sharedContext, inForeground: self.presentAccountStatus.get())
             let sharedApplicationContext = SharedApplicationContext(sharedContext: sharedContext, notificationManager: sharedNotificationManager, sharedWakeupManager: sharedWakeupManager)
             
-            
+            self.sharedApplicationContextValue = sharedApplicationContext
             
             self.sharedContextPromise.set(accountManager.transaction { transaction -> (SharedApplicationContext, LoggingSettings) in
                 return (sharedApplicationContext, transaction.getSharedData(SharedDataKeys.loggingSettings) as? LoggingSettings ?? LoggingSettings.defaultSettings)
@@ -444,35 +646,6 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                 Logger.shared.redactSensitiveData = true//loggingSettings.redactSensitiveData
                 return .single(sharedApplicationContext)
             })
-            
-            
-//            let tonKeychain: TonKeychain
-//            
-//            tonKeychain = TonKeychain(encryptionPublicKey: {
-//                return Signal { subscriber in
-//                    return EmptyDisposable
-//                }
-//            }, encrypt: { data in
-//                return Signal { subscriber in
-//                    if #available(OSX 10.12, *) {
-//                        if let context = self.contextValue?.context, let publicKey = TKPublicKey.get(for: context.account) {
-//                            if let result = publicKey.encrypt(data: data) {
-//                                subscriber.putNext(TonKeychainEncryptedData(publicKey: publicKey.key, data: result))
-//                                subscriber.putCompletion()
-//                                return EmptyDisposable
-//                            }
-//                        }
-//                    }
-//                    subscriber.putError(.generic)
-//                    return EmptyDisposable
-//                }
-//            }, decrypt: { encryptedData in
-//                return Signal { subscriber in
-//                    return EmptyDisposable
-//                }
-//            })
-
-
             
             self.context.set(self.sharedContextPromise.get()
                 |> deliverOnMainQueue
@@ -500,10 +673,10 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                                         }.start()
                                     semaphore.wait()
                                 }
-                              //  let tonContext = StoredTonContext(basePath: account.basePath, postbox: account.postbox, network: account.network, keychain: tonKeychain)
-
+                                //  let tonContext = StoredTonContext(basePath: account.basePath, postbox: account.postbox, network: account.network, keychain: tonKeychain)
+                                
                                 let context = AccountContext(sharedContext: sharedApplicationContext.sharedContext, window: window, account: account)
-                                return AuthorizedApplicationContext(window: window, context: context, launchSettings: settings ?? LaunchSettings.defaultSettings)
+                                return AuthorizedApplicationContext(window: window, context: context, launchSettings: settings ?? LaunchSettings.defaultSettings, callSession: sharedContext.getCrossAccountCallSession(), groupCallContext: sharedContext.getCrossAccountGroupCall())
                                 
                             } else {
                                 return nil
@@ -592,12 +765,13 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                     if let contextValue = self.contextValue {
                         contextValue.context.isCurrent = false
                         contextValue.rootView.removeFromSuperview()
+                    } else if context == nil {
+                        globalAudio?.stop()
                     }
                     
                     (HackUtils.findElements(byClass: "Telegram.OpmizeDatabaseView", in: self.window.contentView!).first as? NSView)?.removeFromSuperview()
                     
-                    
-                    //closeAllModals()
+                    closeModal(ColdStartPasslockController.self)
                     closeAllPopovers(for: window)
                     
                     self.contextValue = context
@@ -606,6 +780,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                         context.context.isCurrent = true
                         context.applyNewTheme()
                         self.window.contentView?.addSubview(context.rootView, positioned: .below, relativeTo: self.window.contentView?.subviews.first)
+                        
                         context.runLaunchAction()
                         if let executeUrlAfterLogin = self.executeUrlAfterLogin {
                             self.executeUrlAfterLogin = nil
@@ -626,7 +801,11 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                                 applicationUpdateUrlPrefix = nil
                             }
                             setAppUpdaterBaseDomain(applicationUpdateUrlPrefix)
+                            #if STABLE
+                            updater_resetWithUpdaterSource(.internal(context: context.context))
+                            #else
                             updater_resetWithUpdaterSource(.external(context: context.context))
+                            #endif
                             
                         }))
                         #endif
@@ -688,8 +867,16 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                                         applicationUpdateUrlPrefix = nil
                                     }
                                     setAppUpdaterBaseDomain(applicationUpdateUrlPrefix)
+                                    #if STABLE
+                                    if let context = self.contextValue?.context {
+                                        updater_resetWithUpdaterSource(.internal(context: context))
+                                    } else {
+                                        updater_resetWithUpdaterSource(.external(context: nil))
+                                    }
+                                    #else
                                     updater_resetWithUpdaterSource(.external(context: self.contextValue?.context))
-
+                                    #endif
+                                    
                                 }))
                                 #endif
                                 
@@ -726,53 +913,47 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             
             NotificationCenter.default.addObserver(self, selector: #selector(self.windiwDidChangeBackingProperties), name: NSWindow.didChangeBackingPropertiesNotification, object: window)
             
-            
-            
-            let fontSizes:[Int32] = [11, 12, 13, 14, 15, 16, 17, 18]
-            
-//            
-//            window.set(handler: { () -> KeyHandlerResult in
-//                _ = updateThemeInteractivetly(accountManager: accountManager, f: { current -> ThemePaletteSettings in
-//                    if let index = fontSizes.firstIndex(of: Int32(current.fontSize)) {
-//                        if index == fontSizes.count - 1 {
-//                            return current
-//                        } else {
-//                            return current.withUpdatedFontSize(CGFloat(fontSizes[index + 1]))
-//                        }
-//                    } else {
-//                        return current
-//                    }
-//                }).start()
-//                if let index = fontSizes.firstIndex(of: Int32(theme.fontSize)), index == fontSizes.count - 1 {
-//                    return .rejected
-//                }
-//                return .invoked
-//            }, with: self, for: .Equal, modifierFlags: [.command])
-//            
-//            window.set(handler: { () -> KeyHandlerResult in
-//                _ = updateThemeInteractivetly(accountManager: accountManager, f: { current -> ThemePaletteSettings in
-//                    if let index = fontSizes.firstIndex(of: Int32(current.fontSize)) {
-//                        if index == 0 {
-//                            return current
-//                        } else {
-//                            return current.withUpdatedFontSize(CGFloat(fontSizes[index - 1]))
-//                        }
-//                    } else {
-//                        return current
-//                    }
-//                }).start()
-//                if let index = fontSizes.firstIndex(of: Int32(theme.fontSize)), index == 0 {
-//                    return .rejected
-//                }
-//                return  .invoked
-//            }, with: self, for: .Minus, modifierFlags: [.command])
-            
             self.window.contentView?.wantsLayer = true
+            
+            sharedWakeupManager.onSleepValueUpdated = { value in
+                self.updatePeerPresence()
+            }
+            sharedNotificationManager.didUpdateLocked = { value in
+                self.updatePeerPresence()
+            }
         })
         
-        
+    }
+
+    func navigateProfile(_ peerId: PeerId, account: Account) {
+        if let context = self.contextValue?.context, context.peerId == account.peerId {
+            context.sharedContext.bindings.rootNavigation().push(PeerInfoController(context: context, peerId: peerId))
+            context.window.makeKeyAndOrderFront(nil)
+            context.window.orderFrontRegardless()
+        } else {
+            sharedApplicationContextValue?.sharedContext.switchToAccount(id: account.id, action: .profile(peerId, necessary: true))
+        }
+    }
+    func navigateChat(_ peerId: PeerId, account: Account) {
+        if let context = self.contextValue?.context, context.peerId == account.peerId {
+            context.sharedContext.bindings.rootNavigation().push(ChatAdditionController.init(context: context, chatLocation: .peer(peerId)))
+            context.window.makeKeyAndOrderFront(nil)
+            context.window.orderFrontRegardless()
+        } else {
+            sharedApplicationContextValue?.sharedContext.switchToAccount(id: account.id, action: .chat(peerId, necessary: true))
+        }
     }
     
+    
+    private func updatePeerPresence() {
+        if let sharedApplicationContextValue = sharedApplicationContextValue {
+            let isOnline = NSApp.isActive && NSApp.isRunning && !NSApp.isHidden && !sharedApplicationContextValue.sharedWakeupManager.isSleeping && !sharedApplicationContextValue.notificationManager._lockedValue.screenLock && !sharedApplicationContextValue.notificationManager._lockedValue.passcodeLock
+            #if DEBUG
+            NSLog("accountIsOnline: \(isOnline)")
+            #endif
+            presentAccountStatus.set(.single(isOnline) |> then(.single(isOnline) |> delay(50, queue: Queue.concurrentBackgroundQueue())) |> restart)
+        }
+    }
     
     @objc public func windiwDidChangeBackingProperties() {
         _ = System.scaleFactor.swap(window.backingScaleFactor)
@@ -782,8 +963,16 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
 
     @IBAction func checkForUpdates(_ sender: Any) {
         #if !APP_STORE
-        showModal(with: InputDataModalController(AppUpdateViewController()), for: window)
-        updater_resetWithUpdaterSource(.external(context: self.contextValue?.context))
+            showModal(with: InputDataModalController(AppUpdateViewController()), for: window)
+            #if STABLE
+                if let context = self.contextValue?.context {
+                    updater_resetWithUpdaterSource(.internal(context: context))
+                } else {
+                    updater_resetWithUpdaterSource(.external(context: nil))
+                }
+            #else
+                updater_resetWithUpdaterSource(.external(context: self.contextValue?.context))
+            #endif
         #endif
     }
     
@@ -852,6 +1041,31 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         }
     }
     
+    private func hangKeybind(_ sharedContext: SharedAccountContext) {
+        let signal = combineLatest(queue: .mainQueue(), voiceCallSettings(sharedContext.accountManager), sharedContext.groupCallContext)
+        
+        _ = signal.start(next: { settings, activeCall in
+            if let pushToTalk = settings.pushToTalk, let _ = activeCall {
+                self.window.isPushToTalkEquaivalent = { event in
+                    if !pushToTalk.modifierFlags.isEmpty, pushToTalk.keyCodes.contains(event.keyCode) {
+                        for modifier in pushToTalk.modifierFlags {
+                            if modifier.flag == event.modifierFlags.rawValue {
+                                return true
+                            }
+                        }
+                    }
+                    return false
+                }
+            } else {
+                self.window.isPushToTalkEquaivalent = nil
+            }
+            
+        })
+
+        
+        
+    }
+    
     
     func window(_ window: NSWindow, willPositionSheet sheet: NSWindow, using rect: NSRect) -> NSRect {
         var rect = rect
@@ -860,13 +1074,20 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
     }
     
     func applicationDidBecomeActive(_ notification: Notification) {
-        presentAccountStatus.set(.single(true) |> then(.single(true) |> delay(50, queue: Queue.concurrentBackgroundQueue())) |> restart)
+        updatePeerPresence()
     }
     
-
+    func tryApplyAutologinToken(_ url: String) -> String? {
+        if let config = contextValue?.context.appConfiguration {
+            if let value = AutologinToken.with(appConfiguration: config) {
+                return value.applyTo(url, isTestServer: contextValue?.context.account.testingEnvironment ?? false)
+            }
+        }
+        return nil
+    }
     
     func applicationDidHide(_ notification: Notification) {
-        presentAccountStatus.set(.single(false))
+        updatePeerPresence()
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -878,7 +1099,7 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
             viewer?.windowDidResignKey()
         } else if let passport = passport {
             passport.window.makeKeyAndOrderFront(nil)
-        } else {
+        } else if !makeKeyAndOrderFrontCallWindow() {
             window.makeKeyAndOrderFront(nil)
         }
         
@@ -926,21 +1147,23 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
                 viewer?.windowDidResignKey()
             } else if let passport = passport {
                 passport.window.makeKeyAndOrderFront(nil)
-            } else {
-                window.makeKeyAndOrderFront(nil)
+            } else if let groupCallWindow = sharedApplicationContextValue?.sharedContext.bindings.groupCall()?.window {
+                groupCallWindow.makeKeyAndOrderFront(nil)
             }
-            
+            self.activeValue.set(true)
             
         }
     }
     
     
     
+    
     func applicationDidResignActive(_ notification: Notification) {
-        presentAccountStatus.set(.single(false))
+        updatePeerPresence()
         if viewer != nil {
             viewer?.window.orderOut(nil)
         }
+        self.activeValue.set(false)
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -970,6 +1193,10 @@ class AppDelegate: NSResponder, NSApplicationDelegate, NSUserNotificationCenterD
         window.resignMain()
     }
     
+    
+    var hasAuthorized: Bool {
+        return contextValue?.context != nil
+    }
     
     @IBAction func unhide(_ sender: Any) {
          window.makeKeyAndOrderFront(sender)

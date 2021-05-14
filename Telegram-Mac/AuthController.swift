@@ -488,7 +488,11 @@ class AuthHeaderView : View {
             var firstTime: Bool = false
             if self.exportTokenView == nil {
                 self.exportTokenView = ExportTokenView(frame: NSMakeRect(0, 0, 300, 500))
+                #if !APP_STORE
+                self.addSubview(self.exportTokenView!, positioned: .below, relativeTo: self.subviews.first(where: { $0 is UpdateTabView }))
+                #else
                 self.addSubview(self.exportTokenView!)
+                #endif
                 self.exportTokenView?.center()
                 
                 self.exportTokenView?.cancelButton.set(handler: { [weak self] _ in
@@ -769,13 +773,28 @@ class AuthController : GenericViewController<AuthHeaderView> {
         
     }
     
+    override func viewDidResized(_ size: NSSize) {
+        super.viewDidResized(size)
+        
+        #if !APP_STORE        
+        updateController.frame = NSMakeRect(0, frame.height - 40, frame.width, 40)
+        #endif
+    }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        #if !APP_STORE
+        updateController.frame = NSMakeRect(0, frame.height - 40, frame.width, 40)
+        #endif
+    }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         
         #if !APP_STORE
             addSubview(updateController.view)
         
-            updateController.frame = NSMakeRect(0, frame.height - 60, frame.width, 60)
+            updateController.frame = NSMakeRect(0, frame.height - 40, frame.width, 40)
         #endif
         
         var arguments: LoginAuthViewArguments?
@@ -887,9 +906,17 @@ class AuthController : GenericViewController<AuthHeaderView> {
                 }
             }
         },resendCode: { [weak self] in
-            if let strongSelf = self {
-                _ = resendAuthorizationCode(account: strongSelf.account).start()
+            if let window = self?.window {
+                confirm(for: window, information: L10n.loginSmsAppErr, cancelTitle: L10n.loginSmsAppErrGotoSite, successHandler: { _ in
+                    
+                }, cancelHandler:{
+                    execute(inapp: .external(link: "https://telegram.org", false))
+                })
+
             }
+//            if let strongSelf = self {
+//                _ = resendAuthorizationCode(account: strongSelf.account).start()
+//            }
         }, editPhone: {
             resetState()
         }, checkCode: { [weak self] code in
@@ -948,7 +975,7 @@ class AuthController : GenericViewController<AuthHeaderView> {
             })
         }, signUp: { [weak self] firstName, lastName, photo in
             guard let `self` = self else {return}
-            _ = showModalProgress(signal: signUpWithName(accountManager: sharedContext.accountManager, account: self.account, firstName: firstName, lastName: lastName, avatarData: photo != nil ? try? Data(contentsOf: photo!) : nil) |> deliverOnMainQueue, for: mainWindow).start(error: { error in
+            _ = showModalProgress(signal: signUpWithName(accountManager: sharedContext.accountManager, account: self.account, firstName: firstName, lastName: lastName, avatarData: photo != nil ? try? Data(contentsOf: photo!) : nil, avatarVideo: nil, videoStartTimestamp: nil) |> deliverOnMainQueue, for: mainWindow).start(error: { error in
                 let text: String
                 switch error {
                 case .limitExceeded:

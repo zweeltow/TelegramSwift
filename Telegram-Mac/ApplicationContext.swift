@@ -93,23 +93,71 @@ enum ApplicationContextLaunchAction {
     case preferences
 }
 
+
+let leftSidebarWidth: CGFloat = 72
+
+private final class ApplicationContainerView: View {
+    fileprivate let splitView: SplitView
+    
+    fileprivate private(set) var leftSideView: NSView?
+    
+    required init(frame frameRect: NSRect) {
+        splitView = SplitView(frame: NSMakeRect(0, 0, frameRect.width, frameRect.height))
+        super.init(frame: frameRect)
+        addSubview(splitView)
+        autoresizingMask = [.width, .height]
+    }
+    
+    required init?(coder decoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func updateLeftSideView(_ view: NSView?, animated: Bool) {
+        if let view = view {
+            addSubview(view)
+        } else {
+            self.leftSideView?.removeFromSuperview()
+        }
+        
+        self.leftSideView = view
+        needsLayout = true
+    }
+    
+    override func updateLocalizationAndTheme(theme: PresentationTheme) {
+        super.updateLocalizationAndTheme(theme: theme)
+        splitView.backgroundColor = theme.colors.background
+    }
+    
+    override func layout() {
+        super.layout()
+        
+        if let leftSideView = leftSideView {
+            leftSideView.frame = NSMakeRect(0, 0, leftSidebarWidth, frame.height)
+            splitView.frame = NSMakeRect(leftSideView.frame.maxX, 0, frame.width - leftSideView.frame.maxX, frame.height)
+        } else {
+            splitView.frame = bounds
+        }
+        
+    }
+}
+
 final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
     
-    
-    private var mediaKeyTap:SPMediaKeyTap?
-    
+        
     var rootView: View {
-        return splitView
+        return view
     }
     
     let context: AccountContext
     private let window:Window
-    private let splitView:SplitView
+    private let view:ApplicationContainerView
     private let leftController:MainViewController
     private let rightController:MajorNavigationController
     private let emptyController:EmptyChatViewController
     
     private var entertainment: EntertainmentViewController?
+    
+    private var leftSidebarController: LeftSidebarController?
     
     private let loggedOutDisposable = MetaDisposable()
     private let ringingStatesDisposable = MetaDisposable()
@@ -124,6 +172,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
     private let chatUndoManagerDisposable = MetaDisposable()
     private let appUpdateDisposable = MetaDisposable()
     private let updatesDisposable = MetaDisposable()
+    private let updateFoldersDisposable = MetaDisposable()
     private let _ready:Promise<Bool> = Promise()
     var ready: Signal<Bool, NoError> {
         return _ready.get() |> filter { $0 } |> take (1)
@@ -132,44 +181,61 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
     func applyNewTheme() {
         rightController.backgroundColor = theme.colors.background
         rightController.backgroundMode = theme.controllerBackgroundMode
-        splitView.backgroundColor = theme.colors.background
+        view.updateLocalizationAndTheme(theme: theme)
     }
     
     private var launchAction: ApplicationContextLaunchAction?
     
-    init(window: Window, context: AccountContext, launchSettings: LaunchSettings) {
+    init(window: Window, context: AccountContext, launchSettings: LaunchSettings, callSession: PCallSession?, groupCallContext: GroupCallContext?) {
         
         self.context = context
         emptyController = EmptyChatViewController(context)
         
         self.window = window
-        window.maxSize = NSMakeSize(.greatestFiniteMagnitude, .greatestFiniteMagnitude)
-        window.minSize = NSMakeSize(380, 500)
         
         if !window.initFromSaver {
             window.setFrame(NSMakeRect(0, 0, 800, 650), display: true)
             window.center()
         }
         
+        
         context.account.importableContacts.set(.single([:]))
         
-        self.splitView = SplitView(frame: window.contentView!.bounds)
+        self.view = ApplicationContainerView(frame: window.contentView!.bounds)
         
       
-        splitView.setProportion(proportion: SplitProportion(min:380, max:300+350), state: .single);
-        splitView.setProportion(proportion: SplitProportion(min:300+350, max:300+350+600), state: .dual)
+        self.view.splitView.setProportion(proportion: SplitProportion(min:380, max:300+350), state: .single);
+        self.view.splitView.setProportion(proportion: SplitProportion(min:300+350, max:300+350+600), state: .dual)
         
         
         
         rightController = ExMajorNavigationController(context, ChatController.self, emptyController);
-        rightController.set(header: NavigationHeader(44, initializer: { (header) -> NavigationHeaderView in
-            let view = InlineAudioPlayerView(header)
-            return view
+        rightController.set(header: NavigationHeader(44, initializer: { header, contextObject, view -> (NavigationHeaderView, CGFloat) in
+            let newView = view ?? InlineAudioPlayerView(header)
+            newView.update(with: contextObject)
+            return (newView, 44)
         }))
         
-        rightController.set(callHeader: CallNavigationHeader(35, initializer: { header -> NavigationHeaderView in
-            let view = CallNavigationHeaderView(header)
-            return view
+        
+        rightController.set(callHeader: CallNavigationHeader(35, initializer: { header, contextObject, view -> (NavigationHeaderView, CGFloat) in
+            let newView: NavigationHeaderView
+            if contextObject is GroupCallContext {
+                if let view = view, view.className == GroupCallNavigationHeaderView.className() {
+                    newView = view
+                } else {
+                    newView = GroupCallNavigationHeaderView(header)
+                }
+            } else if contextObject is PCallSession {
+                if let view = view, view.className == CallNavigationHeaderView.className() {
+                    newView = view
+                } else {
+                    newView = CallNavigationHeaderView(header)
+                }
+            } else {
+                fatalError("not supported")
+            }
+            newView.update(with: contextObject)
+            return (newView, 35 + 18)
         }))
         
         window.rootViewController = rightController
@@ -181,6 +247,8 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         
         
         super.init()
+        
+
         
         
         updatesDisposable.set(managedAppConfigurationUpdates(accountManager: context.sharedContext.accountManager, network: context.account.network).start())
@@ -218,28 +286,17 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
             guard let `self` = self else {
                 fatalError("Cannot use bindings. Application context is not exists")
             }
-            self.splitView.state = state
+            self.view.splitView.state = state
         }, needFullsize: { [weak self] in
-            self?.splitView.needFullsize()
+            self?.view.splitView.needFullsize()
         }, displayUpgradeProgress: { progress in
                 
+        }, callSession: { [weak self] in
+            return self?.rightController.callHeader?.contextObject as? PCallSession
+        }, groupCall: { [weak self] in
+            return self?.rightController.callHeader?.contextObject as? GroupCallContext
         })
         
-        
-        chatUndoManagerDisposable.set((context.chatUndoManager.allStatuses() |> deliverOnMainQueue).start(next: { [weak self] statuses in
-            guard let `self` = self else {return}
-            
-            if let header = self.rightController.undoHeader {
-                (header.view as? UndoOverlayHeaderView)?.removeAnimationForNextTransition = true
-
-                if statuses.hasProcessingActions {
-                    header.show(true)
-                } else {
-                    header.hide(true)
-                }
-            }
-            
-        }))
         
         termDisposable.set((context.account.stateManager.termsOfServiceUpdate |> deliverOnMainQueue).start(next: { terms in
             if let terms = terms {
@@ -252,14 +309,14 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
       
        // var forceNotice:Bool = false
         if FastSettings.isMinimisize {
-            self.splitView.mustMinimisize = true
+            self.view.splitView.mustMinimisize = true
            // forceNotice = true
         } else {
-            self.splitView.mustMinimisize = false
+            self.view.splitView.mustMinimisize = false
         }
         
-        splitView.delegate = self;
-        splitView.update(false)
+        self.view.splitView.delegate = self;
+        self.view.splitView.update(false)
         
        
         
@@ -296,122 +353,206 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         
 
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.rightController.push(ChatController(context: context, chatLocation: .peer(context.peerId)))
             return .invoked
         }, with: self, for: .Zero, priority: .low, modifierFlags: [.command])
         
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(0)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(0, false)
             return .invoked
         }, with: self, for: .One, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(1)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(1, false)
             return .invoked
             }, with: self, for: .Two, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(2)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(2, false)
             return .invoked
         }, with: self, for: .Three, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(3)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(3, false)
             return .invoked
         }, with: self, for: .Four, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(4)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(4, false)
             return .invoked
         }, with: self, for: .Five, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(5)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(5, false)
             return .invoked
         }, with: self, for: .Six, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(6)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(6, false)
             return .invoked
         }, with: self, for: .Seven, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(7)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(7, false)
             return .invoked
         }, with: self, for: .Eight, priority: .low, modifierFlags: [.command])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
-            self?.openChat(8)
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(8, false)
             return .invoked
         }, with: self, for: .Nine, priority: .low, modifierFlags: [.command])
         
         
         
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(0, true)
             return .invoked
         }, with: self, for: .One, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(1, true)
             return .invoked
         }, with: self, for: .Two, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(2, true)
             return .invoked
         }, with: self, for: .Three, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(3, true)
             return .invoked
         }, with: self, for: .Four, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(4, true)
             return .invoked
         }, with: self, for: .Five, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(5, true)
             return .invoked
         }, with: self, for: .Six, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(6, true)
             return .invoked
         }, with: self, for: .Seven, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(7, true)
             return .invoked
         }, with: self, for: .Eight, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(8, true)
             return .invoked
         }, with: self, for: .Nine, priority: .low, modifierFlags: [.command, .option])
         
-        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.openChat(9, true)
             return .invoked
         }, with: self, for: .Minus, priority: .low, modifierFlags: [.command, .option])
         
     
         
-//        window.set(handler: { [weak self] () -> KeyHandlerResult in
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(0, true)
+            return .invoked
+        }, with: self, for: .One, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(1, true)
+            return .invoked
+        }, with: self, for: .Two, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(2, true)
+            return .invoked
+        }, with: self, for: .Three, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(3, true)
+            return .invoked
+        }, with: self, for: .Four, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(4, true)
+            return .invoked
+        }, with: self, for: .Five, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(5, true)
+            return .invoked
+        }, with: self, for: .Six, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(6, true)
+            return .invoked
+        }, with: self, for: .Seven, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(7, true)
+            return .invoked
+        }, with: self, for: .Eight, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(8, true)
+            return .invoked
+        }, with: self, for: .Nine, priority: .low, modifierFlags: [.control])
+        
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.openChat(9, true)
+            return .invoked
+        }, with: self, for: .Minus, priority: .low, modifierFlags: [.control])
+        
+        
+        
+        
+//        window.set(handler: { [weak self] _ -> KeyHandlerResult in
 //            self?.leftController.focusSearch(animated: true)
 //            return .invoked
 //        }, with: self, for: .F, priority: .supreme, modifierFlags: [.command, .shift])
         
+        window.set(handler: { _ -> KeyHandlerResult in
+            context.sharedContext.bindings.rootNavigation().push(ShortcutListController(context: context))
+            return .invoked
+        }, with: self, for: .Slash, priority: .low, modifierFlags: [.command])
+        
         
         
         #if DEBUG
-        window.set(handler: { () -> KeyHandlerResult in
-            context.sharedContext.bindings.rootNavigation().push(GlobalSearchModalController(context: context))
+        window.set(handler: { _ -> KeyHandlerResult in
+
+//            filePanel(with: ["webp"], allowMultiple: false, for: window, completion: { values in
+//                if let first = values?.first {
+//                    showModal(with: AnimatedWebpController(context: context, path: first), for: window)
+//                }
+//            })
+            
+//            showModalText(for: context.window, text: "qkwjeh fkqwejfh qkwef hqwkef hqwkef hqwkef hqwkef hqwekf qwhflkj")
+
+//
+//            _ = presentDesktopCapturerWindow(select: { _ in
+//
+//            }, devices: context.sharedContext.devicesContext)
+            
+//            filePanel(with: ["mov", "mp4"], allowMultiple: false, for: window, completion: { values in
+//                if let first = values?.first {
+//                    let asset = AVURLAsset(url: URL(fileURLWithPath: first))
+//                    let track = asset.tracks(withMediaType: .video).first
+//                    if let track = track {
+//                        showModal(with: VideoAvatarModalController(context: context, asset: asset, track: track), for: window)
+//                    }
+//                }
+//            })
+          //  showModal(with: VideoAvatarModalController(context: context), for: window)
+            
+          //  context.sharedContext.bindings.rootNavigation().push(ShortcutListController(context: context))
             return .invoked
         }, with: self, for: .T, priority: .supreme, modifierFlags: .command)
         #endif
@@ -454,20 +595,24 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         
         someActionsDisposable.add(applyUpdateTextIfNeeded(context.account.postbox).start())
         
-        someActionsDisposable.add(context.globalPeerHandler.get().start(next: { location in
-            if let peerId = location?.peerId {
-                _ = updateLaunchSettings(context.account.postbox, {
-                    $0.withUpdatedNavigation(.chat(peerId, necessary: false))
-                }).start()
-            } else {
-                _ = updateLaunchSettings(context.account.postbox, {
-                    $0.withUpdatedNavigation(nil)
-                }).start()
-            }
-        }))
+ 
         
-        splitView.layout()
+        let foldersSemaphore = DispatchSemaphore(value: 0)
+        var folders: ChatListFolders = ChatListFolders(list: [], sidebar: false)
+            
+        _ = (chatListFilterPreferences(postbox: context.account.postbox) |> take(1)).start(next: { value in
+            folders = value
+            foldersSemaphore.signal()
+        })
+        foldersSemaphore.wait()
+        
+        self.updateLeftSidebar(with: folders, layout: context.sharedContext.layout, animated: false)
+        
+        
+        self.view.splitView.layout()
 
+        
+   
         
         if let navigation = launchSettings.navigation {
             switch navigation {
@@ -475,8 +620,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
                 self.launchAction = .preferences
                 _ready.set(leftController.settings.ready.get())
                 leftController.tabController.select(index: leftController.settingsIndex)
-            case let .chat(peerId, necessary):
-                
+            case let .profile(peerId, necessary):
                 let peerSemaphore = DispatchSemaphore(value: 0)
                 var peer: Peer?
                 _ = context.account.postbox.transaction { transaction in
@@ -484,15 +628,18 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
                     peerSemaphore.signal()
                 }.start()
                 peerSemaphore.wait()
-                
-                if (necessary || context.sharedContext.layout != .single) && launchSettings.openAtLaunch {
-                    if let peer = peer {
-                        let controller = ChatController(context: context, chatLocation: .peer(peer.id))
+
+                _ready.set(leftController.chatList.ready.get())
+                self.leftController.tabController.select(index: self.leftController.chatIndex)
+
+                if (necessary || context.sharedContext.layout != .single) {
+                    if let _ = peer {
+                        let controller = PeerInfoController(context: context, peerId: peerId)
                         controller.navigationController = self.rightController
                         controller.loadViewIfNeeded(self.rightController.bounds)
-                        
+
                         self.launchAction = .navigate(controller)
-                        
+
                         self._ready.set(combineLatest(self.leftController.chatList.ready.get(), controller.ready.get()) |> map { $0 && $1 })
                         self.leftController.tabController.select(index: self.leftController.chatIndex)
                     } else {
@@ -505,6 +652,65 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
                     _ready.set(leftController.chatList.ready.get())
                     self.leftController.tabController.select(index: self.leftController.chatIndex)
                 }
+            case let .chat(peerId, necessary):
+                let peerSemaphore = DispatchSemaphore(value: 0)
+                var peer: Peer?
+                _ = context.account.postbox.transaction { transaction in
+                    peer = transaction.getPeer(peerId)
+                    peerSemaphore.signal()
+                }.start()
+                peerSemaphore.wait()
+                
+                _ready.set(leftController.chatList.ready.get())
+                self.leftController.tabController.select(index: self.leftController.chatIndex)
+                
+                if (necessary || context.sharedContext.layout != .single) {
+                    if let peer = peer {
+                        let controller = ChatController(context: context, chatLocation: .peer(peer.id))
+                        controller.navigationController = self.rightController
+                        controller.loadViewIfNeeded(self.rightController.bounds)
+
+                        self.launchAction = .navigate(controller)
+
+                        self._ready.set(combineLatest(self.leftController.chatList.ready.get(), controller.ready.get()) |> map { $0 && $1 })
+                        self.leftController.tabController.select(index: self.leftController.chatIndex)
+                    } else {
+                       // self._ready.set(self.leftController.chatList.ready.get())
+                        self.leftController.tabController.select(index: self.leftController.chatIndex)
+                        self._ready.set(.single(true))
+                    }
+                } else {
+                   // self._ready.set(.single(true))
+                    _ready.set(leftController.chatList.ready.get())
+                    self.leftController.tabController.select(index: self.leftController.chatIndex)
+                }
+            case let .thread(threadId, fromId, _):
+                self.leftController.tabController.select(index: self.leftController.chatIndex)
+                self._ready.set(self.leftController.chatList.ready.get())
+                
+                let signal:Signal<ReplyThreadInfo, FetchChannelReplyThreadMessageError> = fetchAndPreloadReplyThreadInfo(context: context, subject: .channelPost(threadId))
+                
+                _ = showModalProgress(signal: signal |> take(1), for: context.window).start(next: { [weak context] result in
+                    guard let context = context else {
+                        return
+                    }
+                    let chatLocation: ChatLocation = .replyThread(result.message)
+                    
+                    let updatedMode: ReplyThreadMode
+                    if result.isChannelPost {
+                        updatedMode = .comments(origin: fromId)
+                    } else {
+                        updatedMode = .replies(origin: fromId)
+                    }
+                    
+                    let controller = ChatController.init(context: context, chatLocation: chatLocation, mode: .replyThread(data: result.message, mode: updatedMode), messageId: fromId, initialAction: nil, chatLocationContextHolder: result.contextHolder)
+                    
+                    context.sharedContext.bindings.rootNavigation().push(controller)
+                    
+                }, error: { error in
+                    
+                })
+                
             }
         } else {
            // self._ready.set(.single(true))
@@ -513,25 +719,92 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
           //  _ready.set(leftController.ready.get())
         }
         
-        
-        let callSessionSemaphore = DispatchSemaphore(value: 0)
-        var callSession: PCallSession?
-        _ = _callSession().start(next: { _session in
-            callSession = _session
-            callSessionSemaphore.signal()
-        })
-        callSessionSemaphore.wait()
-        
-        
         if let session = callSession {
-            _ = (session.state.get() |> take(1)).start(next: { [weak session] state in
-                if case .active = state, let session = session {
-                    context.sharedContext.showCallHeader(with: session)
-                }
-            })
+            context.sharedContext.showCall(with: session)
         }
-            
+        
+        if let groupCallContext = groupCallContext {
+            context.sharedContext.showGroupCall(with: groupCallContext)
+        }
+        
+        self.updateFoldersDisposable.set(combineLatest(queue: .mainQueue(), chatListFilterPreferences(postbox: context.account.postbox), context.sharedContext.layoutHandler.get()).start(next: { [weak self] value, layout in
+            self?.updateLeftSidebar(with: value, layout: layout, animated: true)
+        }))
+        
+        
+        if let controller = globalAudio, let header = self.rightController.header {
+            self.rightController.header?.show(false, contextObject: InlineAudioPlayerView.ContextObject(controller: controller, context: context, tableView: nil, supportTableView: nil))
+        }
+        
        // _ready.set(.single(true))
+    }
+    
+    private var folders: ChatListFolders?
+    private var previousLayout: SplitViewState?
+    private let foldersReadyDisposable = MetaDisposable()
+    private func updateLeftSidebar(with folders: ChatListFolders, layout: SplitViewState, animated: Bool) -> Void {
+        
+        let currentSidebar = !folders.list.isEmpty && (folders.sidebar || layout == .minimisize)
+        let previousSidebar = self.folders == nil ? nil : !self.folders!.list.isEmpty && (self.folders!.sidebar || self.previousLayout == SplitViewState.minimisize)
+
+        let readySignal: Signal<Bool, NoError>
+        
+        if currentSidebar != previousSidebar {
+            if !currentSidebar {
+                leftSidebarController?.removeFromSuperview()
+                leftSidebarController = nil
+                readySignal = .single(true)
+            } else {
+                let controller = LeftSidebarController(context, filterData: leftController.chatList.filterSignal, updateFilter: leftController.chatList.updateFilter)
+                controller._frameRect = NSMakeRect(0, 0, leftSidebarWidth, window.frame.height)
+                controller.loadViewIfNeeded()
+                self.leftSidebarController = controller
+                readySignal = controller.ready.get() |> take(1)
+            }
+            let enlarge: CGFloat
+            
+            if currentSidebar && previousSidebar != nil {
+                enlarge = leftSidebarWidth
+            } else {
+                if previousSidebar == true {
+                    enlarge = -leftSidebarWidth
+                } else {
+                    enlarge = 0
+                }
+            }
+            
+            foldersReadyDisposable.set(readySignal.start(next: { [weak self] _ in
+                guard let `self` = self else {
+                    return
+                }
+                self.view.updateLeftSideView(self.leftSidebarController?.genericView, animated: animated)
+                if !self.window.isFullScreen {
+                    self.window.setFrame(NSMakeRect(max(0, self.window.frame.minX - enlarge), self.window.frame.minY, self.window.frame.width + enlarge, self.window.frame.height), display: true, animate: false)
+                }
+                self.updateMinMaxWindowSize(animated: animated)
+            }))
+                        
+            
+        }
+        self.folders = folders
+        self.previousLayout = layout
+    }
+    
+    
+    private func updateMinMaxWindowSize(animated: Bool) {
+        window.maxSize = NSMakeSize(.greatestFiniteMagnitude, .greatestFiniteMagnitude)
+        var width: CGFloat = 380
+        if leftSidebarController != nil {
+            width += leftSidebarWidth
+        }
+        if context.sharedContext.layout == .minimisize {
+            width += 70
+        }
+        window.minSize = NSMakeSize(width, 500)
+        
+        if window.frame.width < window.minSize.width {
+            window.setFrame(NSMakeRect(max(0, window.frame.minX - (window.minSize.width - window.frame.width)), window.frame.minY, window.minSize.width, window.frame.height), display: true, animate: false)
+        }
     }
     
 
@@ -574,7 +847,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
             let max_w = window.frame.width - 380
             let result = round(min(max(point.x, 300), max_w))
             FastSettings.updateLeftColumnWidth(result)
-            splitView.updateStartSize(size: NSMakeSize(result, result), controller: leftController)
+            self.view.splitView.updateStartSize(size: NSMakeSize(result, result), controller: leftController)
         }
         
     }
@@ -582,11 +855,11 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
 
     
     func splitViewDidNeedSwapToLayout(state: SplitViewState) {
-        let previousState = splitView.state
-        splitView.removeAllControllers();
-        let w:CGFloat = FastSettings.leftColumnWidth;
+        let previousState = self.view.splitView.state
+        self.view.splitView.removeAllControllers()
+        let w:CGFloat = FastSettings.leftColumnWidth
         FastSettings.isMinimisize = false
-        splitView.mustMinimisize = false
+        self.view.splitView.mustMinimisize = false
         switch state {
         case .single:
             rightController.empty = leftController
@@ -599,29 +872,30 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
             if rightController.stackCount == 1, previousState != .none {
                 leftController.viewWillAppear(false)
             }
-            splitView.addController(controller: rightController, proportion: SplitProportion(min:380, max:CGFloat.greatestFiniteMagnitude))
+            self.view.splitView.addController(controller: rightController, proportion: SplitProportion(min:380, max:CGFloat.greatestFiniteMagnitude))
             if rightController.stackCount == 1, previousState != .none {
                 leftController.viewDidAppear(false)
             }
+            
         case .dual:
             rightController.empty = emptyController
             if rightController.controller is ForwardChatListController {
                 rightController.back(animated:false)
             }
-            splitView.addController(controller: leftController, proportion: SplitProportion(min:w, max:w))
-            splitView.addController(controller: rightController, proportion: SplitProportion(min:380, max:CGFloat.greatestFiniteMagnitude))
+            self.view.splitView.addController(controller: leftController, proportion: SplitProportion(min:w, max:w))
+            self.view.splitView.addController(controller: rightController, proportion: SplitProportion(min:380, max:CGFloat.greatestFiniteMagnitude))
         case .minimisize:
-            splitView.mustMinimisize = true
+            self.view.splitView.mustMinimisize = true
             FastSettings.isMinimisize = true
-            splitView.addController(controller: leftController, proportion: SplitProportion(min:70, max:70))
-            splitView.addController(controller: rightController, proportion: SplitProportion(min:380, max:CGFloat.greatestFiniteMagnitude))
+            self.view.splitView.addController(controller: leftController, proportion: SplitProportion(min:70, max:70))
+            self.view.splitView.addController(controller: rightController, proportion: SplitProportion(min:380, max:CGFloat.greatestFiniteMagnitude))
         default:
             break;
         }
-
         
         context.sharedContext.layoutHandler.set(state)
-        splitView.layout()
+        updateMinMaxWindowSize(animated: false)
+        self.view.splitView.layout()
 
     }
     
@@ -653,12 +927,13 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         alertsDisposable.dispose()
         termDisposable.dispose()
         viewer?.close()
-        globalAudio?.cleanup()
         someActionsDisposable.dispose()
         clearReadNotifiesDisposable.dispose()
         chatUndoManagerDisposable.dispose()
         appUpdateDisposable.dispose()
         updatesDisposable.dispose()
+        updateFoldersDisposable.dispose()
+        foldersReadyDisposable.dispose()
         context.cleanup()
         NotificationCenter.default.removeObserver(self)
     }

@@ -48,6 +48,19 @@ final class ChatMessageBubbleBackdrop: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
+    func change(pos position: NSPoint, animated: Bool, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) -> Void  {
+        super._change(pos: position, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction, completion: completion)
+    
+        
+    }
+    
+    func change(size: NSSize, animated: Bool, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) {
+        maskView?._change(size: size, animated: animated, duration: duration, timingFunction: timingFunction)
+        super._change(size: size, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction, completion: completion)
+        
+        self.borderView._change(size: size, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction, completion: completion)
+    }
+
     
     func setType(image: (CGImage, NSEdgeInsets)?, border: (CGImage, NSEdgeInsets)?, background: CGImage) {
         if let _ = image {
@@ -81,12 +94,14 @@ final class ChatMessageBubbleBackdrop: NSView {
     }
 
     func update(rect: CGRect, within containerSize: CGSize, animated: Bool, rotated: Bool = false) {
-        self.backgroundContent._change(size: containerSize, animated: animated)
-        self.backgroundContent._change(pos: CGPoint(x: -rect.minX, y: -rect.minY), animated: animated, forceAnimateIfHasAnimation: true)
-        if rotated {
-            backgroundContent.rotate(byDegrees: 180)
-        } else {
-            backgroundContent.rotate(byDegrees: 0)
+        if self.backgroundContent.frame != CGRect(origin: CGPoint(x: -rect.minX, y: -rect.minY), size: containerSize) {
+            self.backgroundContent._change(size: containerSize, animated: animated)
+            self.backgroundContent._change(pos: CGPoint(x: -rect.minX, y: -rect.minY), animated: animated, forceAnimateIfHasAnimation: true)
+            if rotated {
+                backgroundContent.rotate(byDegrees: 180)
+            } else {
+                backgroundContent.rotate(byDegrees: 0)
+            }
         }
     }
 }

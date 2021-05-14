@@ -69,7 +69,7 @@ public func transformOutgoingMessageMedia(postbox: Postbox, network: Network, re
                             }
                         }
                         
-                        try? FileManager.default.linkItem(atPath: data.0.path, toPath: thumbedFile)
+                        try? FileManager.default.createSymbolicLink(atPath: data.0.path, withDestinationPath: thumbedFile)
                         
                         if file.mimeType.hasPrefix("image/") {
                             
@@ -111,9 +111,10 @@ public func transformOutgoingMessageMedia(postbox: Postbox, network: Network, re
                                 
                                 CGImageDestinationAddImage(colorDestination, image, options as CFDictionary)
                                 if CGImageDestinationFinalize(colorDestination) {
-                                    let thumbnailResource = LocalFileMediaResource(fileId: arc4random64())
+                                    let isSecretRelated = (file.previewRepresentations.first as? LocalFileMediaResource)?.isSecretRelated ?? false
+                                    let thumbnailResource = LocalFileMediaResource(fileId: arc4random64(), isSecretRelated: isSecretRelated)
                                     postbox.mediaBox.storeResourceData(thumbnailResource.id, data: mutableData as Data)
-                                    subscriber.putNext(AnyMediaReference.standalone(media: file.withUpdatedSize(Int(size ?? 0)).withUpdatedPreviewRepresentations([TelegramMediaImageRepresentation(dimensions: PixelDimensions(image.size), resource: thumbnailResource)])))
+                                    subscriber.putNext(AnyMediaReference.standalone(media: file.withUpdatedSize(Int(size ?? 0)).withUpdatedPreviewRepresentations([TelegramMediaImageRepresentation(dimensions: PixelDimensions(image.size), resource: thumbnailResource, progressiveSizes: [], immediateThumbnailData: nil)])))
                                     
                                      return EmptyDisposable
                                 }

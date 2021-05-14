@@ -21,10 +21,10 @@ class ReplyMarkupButtonLayout {
     let style:ControlStyle
     let button:ReplyMarkupButton
     
-    init(button:ReplyMarkupButton, style:ControlStyle = ControlStyle(backgroundColor: theme.colors.grayForeground, highlightColor: theme.colors.text), isInput: Bool) {
+    init(button:ReplyMarkupButton, style:ControlStyle = ControlStyle(backgroundColor: theme.colors.grayForeground, highlightColor: theme.colors.text), isInput: Bool, paid: Bool) {
         self.button = button
         self.style = style
-        self.text = TextViewLayout(NSAttributedString.initialize(string: button.title.fixed, color: theme.controllerBackgroundMode.hasWallpapaer && !isInput ? theme.chatServiceItemTextColor : theme.colors.text, font: .normal(.short)), maximumNumberOfLines: 1, truncationType: .middle, cutout: nil, alignment: .center)
+        self.text = TextViewLayout(NSAttributedString.initialize(string: paid ? L10n.messageReplyActionButtonShowReceipt : button.title.fixed, color: theme.controllerBackgroundMode.hasWallpaper && !isInput ? theme.chatServiceItemTextColor : theme.colors.text, font: .normal(.short)), maximumNumberOfLines: 1, truncationType: .middle, cutout: nil, alignment: .center)
     }
     
     func measure(_ width:CGFloat) {
@@ -53,14 +53,14 @@ class ReplyMarkupNode: Node {
     
     private let interactions:ReplyMarkupInteractions
     private let isInput: Bool
-    init(_ rows:[ReplyMarkupRow], _ flags:ReplyMarkupMessageFlags, _ interactions:ReplyMarkupInteractions, _ view:View? = nil, _ isInput: Bool = false) {
+    init(_ rows:[ReplyMarkupRow], _ flags:ReplyMarkupMessageFlags, _ interactions:ReplyMarkupInteractions, _ view:View? = nil, _ isInput: Bool = false, paid: Bool = false) {
         self.flags = flags
         self.isInput = isInput
         self.interactions = interactions
         var layoutRows:[[ReplyMarkupButtonLayout]] = Array(repeating: [], count: rows.count)
         for i in 0 ..< rows.count {
             for button in rows[i].buttons {
-                layoutRows[i].append(ReplyMarkupButtonLayout(button: button, isInput: isInput))
+                layoutRows[i].append(ReplyMarkupButtonLayout(button: button, isInput: isInput, paid: paid))
             }
         }
         self.markup = layoutRows
@@ -77,12 +77,16 @@ class ReplyMarkupNode: Node {
                 case let .url(url):
                     if !url.isSingleEmoji {
                         urlView = ImageView()
-                        urlView?.image = theme.icons.chatActionUrl
+                        urlView?.image = theme.chat.chatActionUrl(theme: theme)
                         urlView?.sizeToFit()
                     }
+                case .payment:
+                    urlView = ImageView()
+                    urlView?.image = theme.chat.chatInvoiceAction(theme: theme)
+                    urlView?.sizeToFit()
                 case .switchInline:
                     urlView = ImageView()
-                    urlView?.image = theme.icons.chatActionUrl
+                    urlView?.image = theme.chat.chatActionUrl(theme: theme)
                     urlView?.sizeToFit()
                 default:
                     break
@@ -140,7 +144,7 @@ class ReplyMarkupNode: Node {
                 }
                 rect.size = NSMakeSize(w, ReplyMarkupNode.buttonHeight)
                 let button:View? = view?.subviews[i] as? View
-                button?.backgroundColor = theme.controllerBackgroundMode.hasWallpapaer && !isInput ? theme.chatServiceItemColor : theme.colors.grayBackground
+                button?.backgroundColor = theme.controllerBackgroundMode.hasWallpaper && !isInput ? theme.chatServiceItemColor : theme.colors.grayBackground
                 if let button = button {
                     button.frame = rect
                     button.setNeedsDisplayLayer()

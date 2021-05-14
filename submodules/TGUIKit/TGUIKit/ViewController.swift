@@ -63,12 +63,28 @@ public final class BackgroundGradientView : View {
 
 
 open class BackgroundView: ImageView {
+    
+    public var _customHandler:CustomViewHandlers?
+    
+    public var customHandler:CustomViewHandlers {
+        if _customHandler == nil {
+            _customHandler = CustomViewHandlers()
+        }
+        return _customHandler!
+    }
+    
+    deinit {
+        var bp:Int = 0
+        bp += 1
+    }
+    
     private let gradient: BackgroundGradientView
 
     public override init(frame frameRect: NSRect) {
         gradient = BackgroundGradientView(frame: NSMakeRect(0, 0, frameRect.width, frameRect.height))
         super.init(frame: frameRect)
         addSubview(gradient)
+        autoresizesSubviews = false
 //        gradient.actions = [:]
 //
 //        gradient.bounds = NSMakeRect(0, 0, max(bounds.width, bounds.height), max(bounds.width, bounds.height))
@@ -84,13 +100,14 @@ open class BackgroundView: ImageView {
         gradient.change(size: size, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction)
     }
     
-    init() {
+    override init() {
         fatalError("not supported")
     }
     
     open override func layout() {
         super.layout()
         gradient.frame = bounds
+        _customHandler?.layout?(self)
 //        gradient.bounds = NSMakeRect(0, 0, max(frame.width, frame.height) * 2, max(frame.width, frame.height) * 2)
 //        gradient.position = NSMakePoint(frame.width / 2, frame.height / 2)
     }
@@ -238,9 +255,7 @@ public class ControllerToaster {
     
     deinit {
         let view = self.view
-        view?.layer?.animatePosition(from: NSZeroPoint, to: NSMakePoint(0, -height), duration: 0.2, removeOnCompletion:false, completion:{ (completed) in
-            view?.removeFromSuperview()
-        })
+        view?.removeFromSuperview()
         disposable.dispose()
     }
     
@@ -254,6 +269,8 @@ open class ViewController : NSObject {
     
     public var atomicSize:Atomic<NSSize> = Atomic(value:NSZeroSize)
     
+    public var onDeinit: (()->Void)? = nil
+    
     weak open var navigationController:NavigationViewController? {
         didSet {
             if navigationController != oldValue {
@@ -264,7 +281,7 @@ open class ViewController : NSObject {
     
     public var noticeResizeWhenLoaded: Bool = true
     
-    public var animationStyle:AnimationStyle = AnimationStyle(duration:0.3, function:CAMediaTimingFunctionName.spring)
+    public var animationStyle:AnimationStyle = AnimationStyle(duration:0.4, function:CAMediaTimingFunctionName.spring)
     public var bar:NavigationBarStyle = NavigationBarStyle(height:50)
     
     public var leftBarView:BarView!
@@ -272,8 +289,9 @@ open class ViewController : NSObject {
     public var rightBarView:BarView!
     
     public var popover:Popover?
-    open  var modal:Modal?
+    open var modal:Modal?
     
+    private var widthOnDisappear: CGFloat? = nil
     
     public var ableToNextController:(ViewController, @escaping(ViewController, Bool)->Void)->Void = { controller, f in
         f(controller, true)
@@ -386,6 +404,7 @@ open class ViewController : NSObject {
             NotificationCenter.default.addObserver(self, selector: #selector(viewFrameChanged(_:)), name: NSView.frameDidChangeNotification, object: _view!)
             
             _ = atomicSize.swap(_view!.frame.size)
+            viewDidLoad()
         }
     }
     
@@ -421,6 +440,7 @@ open class ViewController : NSObject {
     
     open func requestUpdateCenterBar() {
         setCenterTitle(defaultBarTitle)
+        setCenterStatus(defaultBarStatus)
     }
     
     open func dismiss() {
@@ -467,12 +487,18 @@ open class ViewController : NSObject {
         
     }
     
-    open func focusSearch(animated: Bool) {
+    open func focusSearch(animated: Bool, text: String? = nil) {
         
     }
     
     open func invokeNavigationBack() -> Bool {
         return true
+    }
+    
+    open func updateFrame(_ frame: NSRect, animated: Bool) {
+        if isLoaded() {
+            (animated ? self.view.animator() : self.view).frame = frame
+        }
     }
     
     open func getLeftBarViewOnce() -> BarView {
@@ -482,6 +508,10 @@ open class ViewController : NSObject {
     open var defaultBarTitle:String {
         return localizedString(self.className)
     }
+    open var defaultBarStatus:String? {
+        return nil
+    }
+
     
     open func getCenterBarViewOnce() -> TitledBarView {
         return TitledBarView(controller: self, .initialize(string: defaultBarTitle, color: presentation.colors.text, font: .medium(.title)))
@@ -490,7 +520,13 @@ open class ViewController : NSObject {
     public func setCenterTitle(_ text:String) {
         self.centerBarView.text = .initialize(string: text, color: presentation.colors.text, font: .medium(.title))
     }
-    
+    public func setCenterStatus(_ text: String?) {
+        if let text = text {
+            self.centerBarView.status = .initialize(string: text, color: presentation.colors.grayText, font: .normal(.text))
+        } else {
+            self.centerBarView.status = nil
+        }
+    }
     open func getRightBarViewOnce() -> BarView {
         return BarView(controller: self)
     }
@@ -537,15 +573,18 @@ open class ViewController : NSObject {
     
     deinit {
         self.window?.removeObserver(for: self)
-        window?.removeAllHandlers(for: self)
+        self.window?.removeAllHandlers(for: self)
         NotificationCenter.default.removeObserver(self)
         assertOnMainThread()
+        self.onDeinit?()
     }
+    
     
     open func viewWillDisappear(_ animated:Bool) -> Void {
         if #available(OSX 10.12.2, *) {
             window?.touchBar = nil
         }
+        widthOnDisappear = frame.width
         //assert(self.window != nil)
         if canBecomeResponder {
             self.window?.removeObserver(for: self)
@@ -570,7 +609,7 @@ open class ViewController : NSObject {
           //  }
         }
         if haveNextResponder {
-            self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+            self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
                 guard let `self` = self else {return .rejected}
                 
                 _ = self.window?.makeFirstResponder(self.nextResponder())
@@ -595,6 +634,21 @@ open class ViewController : NSObject {
         NotificationCenter.default.addObserver(self, selector: #selector(windowDidResignKey), name: NSWindow.didResignKeyNotification, object: window)
         if let window = window {
             isKeyWindow.set(.single(window.isKeyWindow))
+        }
+        
+        func findTableView(in view: NSView) -> Void {
+            for subview in view.subviews {
+                if subview is NSTableView {
+                    if !subview.inLiveResize {
+                        subview.viewDidEndLiveResize()
+                    }
+                } else if !subview.subviews.isEmpty {
+                    findTableView(in: subview)
+                }
+            }
+        }
+        if let widthOnDisappear = widthOnDisappear, frame.width != widthOnDisappear {
+            findTableView(in: view)
         }
     }
     
@@ -779,6 +833,11 @@ open class GenericViewController<T> : ViewController where T:NSView {
         genericView.background = presentation.colors.background
     }
     
+    deinit {
+        var bp:Int = 0
+        bp += 1
+    }
+    
     override open func loadView() -> Void {
         if(_view == nil) {
             
@@ -797,12 +856,15 @@ open class GenericViewController<T> : ViewController where T:NSView {
         viewDidLoad()
     }
     
+    public var initializationRect: NSRect {
+        return NSMakeRect(_frameRect.minX, _frameRect.minY, _frameRect.width, _frameRect.height - bar.height)
+    }
     
 
     open func initializer() -> T {
         let vz = T.self as NSView.Type
         //controller.bar.height
-        return vz.init(frame: NSMakeRect(_frameRect.minX, _frameRect.minY, _frameRect.width, _frameRect.height - bar.height)) as! T
+        return vz.init(frame: initializationRect) as! T
     }
     
 }
@@ -820,7 +882,32 @@ public struct ModalHeaderData {
     }
 }
 
-open class ModalViewController : ViewController {
+public protocol ModalControllerHelper {
+    var modalInteractions:ModalInteractions? { get }
+}
+
+open class ModalViewController : ViewController, ModalControllerHelper {
+    
+    public struct Theme {
+        let text: NSColor
+        let grayText: NSColor
+        let background: NSColor
+        let border: NSColor
+        let accent: NSColor
+        let grayForeground: NSColor
+        public init(text: NSColor = presentation.colors.text, grayText: NSColor = presentation.colors.grayText, background: NSColor = presentation.colors.background, border: NSColor = presentation.colors.border, accent: NSColor = presentation.colors.accent, grayForeground: NSColor = presentation.colors.grayForeground) {
+            self.text = text
+            self.grayText = grayText
+            self.background = background
+            self.border = border
+            self.accent = accent
+            self.grayForeground = grayForeground
+        }
+    }
+    
+    open var modalTheme:Theme {
+        return Theme()
+    }
     
     open var closable:Bool {
         return true
@@ -829,6 +916,10 @@ open class ModalViewController : ViewController {
     // use this only for modal progress. This is made specially for nsvisualeffect support.
     open var contentBelowBackground: Bool {
         return false
+    }
+    
+    open var shouldCloseAllTheSameModals: Bool {
+        return true
     }
     
     private var temporaryTouchBar: Any?
@@ -876,6 +967,9 @@ open class ModalViewController : ViewController {
     }
     open var headerBackground: NSColor {
         return presentation.colors.background
+    }
+    open var headerBorderColor: NSColor {
+        return presentation.colors.border
     }
     
     open var dynamicSize:Bool {
@@ -943,12 +1037,27 @@ open class ModalController : ModalViewController {
         self.controller = controller
         super.init(frame: controller._frameRect)
     }
-    
+
     open override var handleEvents: Bool {
         return true
     }
     
+    open override var modalInteractions: ModalInteractions? {
+        return (self.controller.controller as? ModalControllerHelper)?.modalInteractions
+    }
     
+    open override func viewWillAppear(_ animated: Bool) {
+        self.controller.viewWillAppear(animated)
+    }
+    open override func viewWillDisappear(_ animated: Bool) {
+        self.controller.viewWillDisappear(animated)
+    }
+    open override func viewDidAppear(_ animated: Bool) {
+        self.controller.viewDidAppear(animated)
+    }
+    open override func viewDidDisappear(_ animated: Bool) {
+        self.controller.viewDidDisappear(animated)
+    }
     open override func firstResponder() -> NSResponder? {
         return controller.controller.firstResponder()
     }
@@ -973,6 +1082,11 @@ open class ModalController : ModalViewController {
         super.viewDidLoad()
         ready.set(controller.controller.ready.get())
     }
+    
+    open override func becomeFirstResponder() -> Bool? {
+        return nil
+    }
+    
     
     open override func loadView() {
         self._view = controller.view

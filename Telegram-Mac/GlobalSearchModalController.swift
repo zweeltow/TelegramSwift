@@ -87,7 +87,7 @@ private func globalSearchEntries(state: GlobalSearchState, arguments: GlobalSear
             }
             
             for entry in _messageEntries {
-                entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_message(entry.index), equatable: nil, item: { initialSize, stableId in
+                entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_message(entry.index), equatable: nil, comparable: nil, item: { initialSize, stableId in
                     let item:TableRowItem
                     switch entry {
                     case .DateEntry:
@@ -155,7 +155,7 @@ func GlobalSearchModalController(context: AccountContext) -> ViewController {
                     state.searchState = nil
                     return state
                 }
-                let signal = searchMessages(account: context.account, location: .general, query: "#g c:ru minviews:100 \(searchState.request)", state: stateValue.with { $0.searchState }, limit: 100) |> deliverOnMainQueue
+                let signal = searchMessages(account: context.account, location: .general(tags: nil, minDate: nil, maxDate: nil), query: "#g c:ru minviews:100 \(searchState.request)", state: stateValue.with { $0.searchState }, limit: 100) |> deliverOnMainQueue
                 
                 searchDisposable.set(signal.start(next: { searchResult, searchState in
                     updateState { state in

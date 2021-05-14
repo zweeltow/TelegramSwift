@@ -6,6 +6,7 @@
 //  Copyright © 2016 Telegram. All rights reserved.
 //
 
+
 import Cocoa
 import TGUIKit
 import SwiftSignalKit
@@ -15,14 +16,23 @@ import Postbox
 
 
 
+
+protocol ChatHeaderProtocol {
+    func update(with state: ChatHeaderState, animated: Bool)
+    init(_ chatInteraction:ChatInteraction, state: ChatHeaderState, frame: NSRect)
+}
+
+
+
+
 enum ChatHeaderState : Identifiable, Equatable {
-    case none
-    case search(ChatSearchInteractions, Peer?)
-    case addContact(block: Bool)
-    case shareInfo
-    case pinned(MessageId)
-    case report
-    case sponsored
+    case none(ChatActiveGroupCallInfo?)
+    case search(ChatActiveGroupCallInfo?, ChatSearchInteractions, Peer?, String?)
+    case addContact(ChatActiveGroupCallInfo?, block: Bool, autoArchived: Bool)
+    case shareInfo(ChatActiveGroupCallInfo?)
+    case pinned(ChatActiveGroupCallInfo?, ChatPinnedMessage, doNotChangeTable: Bool)
+    case report(ChatActiveGroupCallInfo?, autoArchived: Bool)
+    case promo(ChatActiveGroupCallInfo?, PromoChatListItem.Kind)
     var stableId:Int {
         switch self {
         case .none:
@@ -35,116 +45,280 @@ enum ChatHeaderState : Identifiable, Equatable {
             return 3
         case .pinned:
             return 4
-        case .sponsored:
+        case .promo:
             return 5
         case .shareInfo:
             return 6
         }
     }
+
+    var voiceChat: ChatActiveGroupCallInfo? {
+        switch self {
+        case let .none(voiceChat):
+            return voiceChat
+        case let .search(voiceChat, _, _, _):
+            return voiceChat
+        case let .report(voiceChat, _):
+            return voiceChat
+        case let .addContact(voiceChat, _, _):
+            return voiceChat
+        case let .pinned(voiceChat, _, _):
+            return voiceChat
+        case let .promo(voiceChat, _):
+            return voiceChat
+        case let .shareInfo(voiceChat):
+            return voiceChat
+        }
+    }
+    
+    var primaryClass: AnyClass? {
+        switch self {
+        case .addContact:
+            return AddContactView.self
+        case .shareInfo:
+            return ShareInfoView.self
+        case .pinned:
+            return ChatPinnedView.self
+        case .search:
+            return ChatSearchHeader.self
+        case .report:
+            return ChatReportView.self
+        case .promo:
+            return ChatSponsoredView.self
+        case .none:
+            return nil
+        }
+    }
+    var secondaryClass: AnyClass? {
+        if let _ = voiceChat {
+            return ChatGroupCallView.self
+        }
+        return nil
+    }
     
     var height:CGFloat {
+        return primaryHeight + secondaryHeight
+    }
+
+    var primaryHeight:CGFloat {
+        var height: CGFloat = 0
         switch self {
         case .none:
-            return 0
+            height += 0
         case .search:
-            return 44
+            height += 44
         case .report:
-            return 44
+            height += 44
         case .addContact:
-            return 44
+            height += 44
         case .shareInfo:
-            return 44
+            height += 44
         case .pinned:
-            return 44
-        case .sponsored:
-            return 44
+            height += 44
+        case .promo:
+            height += 44
+        }
+        return height
+    }
+
+    var secondaryHeight:CGFloat {
+        var height: CGFloat = 0
+        if let _ = voiceChat {
+            height += 44
+        }
+        return height
+    }
+    
+    var toleranceHeight: CGFloat {
+        switch self {
+        case let .pinned(_, _, doNotChangeTable):
+            return doNotChangeTable ? height - primaryHeight : height
+        default:
+            return height
         }
     }
     
     static func ==(lhs:ChatHeaderState, rhs: ChatHeaderState) -> Bool {
         switch lhs {
-        case let .pinned(pinnedId):
-            if case .pinned(pinnedId) = rhs {
+        case let .pinned(call, pinnedId, value):
+            if case .pinned(call, pinnedId, value) = rhs {
+                return true
+            } else {
+                return false
+            }
+        case let .addContact(call, block, autoArchive):
+            if case .addContact(call, block, autoArchive) = rhs {
                 return true
             } else {
                 return false
             }
         default:
-            return lhs.stableId == rhs.stableId
+            return lhs.stableId == rhs.stableId && lhs.voiceChat == rhs.voiceChat
         }
     }
 }
 
 
-
-
 class ChatHeaderController {
     
     
-    private var _headerState:ChatHeaderState = .none
+    private var _headerState:ChatHeaderState = .none(nil)
     private let chatInteraction:ChatInteraction
     
     private(set) var currentView:View?
-    
+
+    private var primaryView: View?
+    private var seconderyView : View?
+
     var state:ChatHeaderState {
         return _headerState
     }
     
     func updateState(_ state:ChatHeaderState, animated:Bool, for view:View) -> Void {
         if _headerState != state {
-            let previousState = _headerState
             _headerState = state
-            
-            if let current = currentView {
-                if animated {
-                    currentView?.layer?.animatePosition(from: NSZeroPoint, to: NSMakePoint(0, -previousState.height), duration: 0.2, removeOnCompletion:false, completion: { [weak current] complete in
-                        if complete {
-                            current?.removeFromSuperview()
-                        }
-                        
-                    })
+
+            let (primary, secondary) = viewIfNecessary(primarySize: NSMakeSize(view.frame.width, state.primaryHeight), secondarySize: NSMakeSize(view.frame.width, state.secondaryHeight), animated: animated, p_v: self.primaryView, s_v: self.seconderyView)
+
+            let previousPrimary = self.primaryView
+            let previousSecondary = self.seconderyView
+
+            self.primaryView = primary
+            self.seconderyView = secondary
+
+            var removed: [View] = []
+            var added:[(View, NSPoint, NSPoint, View?)] = []
+            var updated:[(View, NSPoint, View?)] = []
+
+            if previousSecondary == nil || previousSecondary != secondary {
+                if let previousSecondary = previousSecondary {
+                    removed.append(previousSecondary)
+                }
+                if let secondary = secondary {
+                    added.append((secondary, NSMakePoint(0, -state.secondaryHeight), NSMakePoint(0, 0), nil))
+                }
+            }
+            if previousPrimary == nil || previousPrimary != primary {
+                if let previousPrimary = previousPrimary {
+                    removed.append(previousPrimary)
+                }
+                if let primary = primary {
+                    added.append((primary, NSMakePoint(0, -(state.height - state.secondaryHeight)), NSMakePoint(0, state.secondaryHeight), secondary))
+                }
+            }
+
+            if (previousSecondary == nil && secondary != nil) || previousSecondary != nil && secondary == nil {
+                if let primary = primary, previousPrimary == primary {
+                    updated.append((primary, NSMakePoint(0, state.secondaryHeight), secondary))
+                }
+            }
+            if (previousPrimary == nil && primary != nil) || previousPrimary != nil && primary == nil {
+                if let secondary = secondary, previousSecondary == secondary {
+                    updated.append((secondary, NSMakePoint(0, 0), nil))
+                }
+            }
+
+            if !added.isEmpty || primary != nil  || secondary != nil {
+                let current: View
+                if let view = currentView {
+                    current = view
+                    current.change(size: NSMakeSize(view.frame.width, state.height), animated: animated)
                 } else {
-                    currentView?.removeFromSuperview()
-                    currentView = nil
+                    current = View(frame: NSMakeRect(0, 0, view.frame.width, state.height))
+                    current.autoresizingMask = [.width]
+                    current.autoresizesSubviews = true
+                    view.addSubview(current)
+                    self.currentView = current
+                }
+                for view in removed {
+                    if animated {
+//                        view.layer?.animateAlpha(from: 1, to: 0, duration: 0.2, removeOnCompletion: false, completion: { [weak view] _ in
+//                            view?.removeFromSuperview()
+//                        })
+                        view.layer?.animatePosition(from: view.frame.origin, to: NSMakePoint(0, view.frame.minY - view.frame.height), removeOnCompletion: false, completion: { [weak view] _ in
+                            view?.removeFromSuperview()
+                        })
+                    } else {
+                        view.removeFromSuperview()
+                    }
+                }
+                for (view, from, to, below) in added {
+                    current.addSubview(view, positioned: .below, relativeTo: below)
+                    view.setFrameOrigin(to)
+                    
+                    if animated {
+                        view.layer?.animatePosition(from: from, to: to, duration: 0.2)
+                      //  view.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
+                    }
+                }
+                for (view, point, above) in updated {
+                    current.addSubview(view, positioned: .below, relativeTo: above)
+                    view.change(pos: point, animated: animated)
+                }
+            } else {
+                if let currentView = currentView {
+                    self.currentView = nil
+                    if animated {
+                        currentView.layer?.animateAlpha(from: 1, to: 0, duration: 0.2, removeOnCompletion: false)
+                        currentView.layer?.animatePosition(from: currentView.frame.origin, to: currentView.frame.origin - NSMakePoint(0, currentView.frame.height), removeOnCompletion:false, completion: { [weak currentView] _ in
+                            currentView?.removeFromSuperview()
+                        })
+                    } else {
+                        currentView.removeFromSuperview()
+                    }
                 }
             }
             
-            currentView = viewIfNecessary(NSMakeSize(view.frame.width, state.height))
-            
-            if let newView = currentView {
-                view.addSubview(newView)
-                (newView as? ChatSearchHeader)?.applySearchResponder()
-                newView.layer?.removeAllAnimations()
-                if animated {
-                    newView.layer?.animatePosition(from: NSMakePoint(0,-state.height), to: NSZeroPoint, duration: 0.2, completion: { [weak newView] _ in
-                        
-                    })
-                }
-            }
+
         }
     }
+
+    func applySearchResponder() {
+         (primaryView as? ChatSearchHeader)?.applySearchResponder(true)
+    }
     
-    private func viewIfNecessary(_ size:NSSize) -> View? {
-        let view:View?
-        switch _headerState {
-        case let .addContact(block):
-            view = AddContactView(chatInteraction, canBlock: block)
-        case .shareInfo:
-            view = ShareInfoView(chatInteraction)
-        case let .pinned(messageId):
-            view = ChatPinnedView(messageId, chatInteraction: chatInteraction)
-        case let .search(interactions, initialPeer):
-            view = ChatSearchHeader(interactions, chatInteraction: chatInteraction, initialPeer: initialPeer)
-        case .report:
-            view = ChatReportView(chatInteraction)
-        case .sponsored:
-            view = ChatSponsoredView(chatInteraction: chatInteraction)
-        case .none:
-            view = nil
-        
+    private func viewIfNecessary(primarySize: NSSize, secondarySize: NSSize, animated: Bool, p_v: View?, s_v: View?) -> (primary: View?, secondary: View?) {
+        let primary:View?
+        let secondary:View?
+        let primaryRect: NSRect = .init(origin: .zero, size: primarySize)
+        let secondaryRect: NSRect = .init(origin: .zero, size: secondarySize)
+        if p_v == nil || p_v?.className != NSStringFromClass(_headerState.primaryClass ?? NSView.self)  {
+            switch _headerState {
+            case .addContact:
+                primary = AddContactView(chatInteraction, state: _headerState, frame: primaryRect)
+            case .shareInfo:
+                primary = ShareInfoView(chatInteraction, state: _headerState, frame: primaryRect)
+            case .pinned:
+                primary = ChatPinnedView(chatInteraction, state: _headerState, frame: primaryRect)
+            case .search:
+                primary = ChatSearchHeader(chatInteraction, state: _headerState, frame: primaryRect)
+            case .report:
+                primary = ChatReportView(chatInteraction, state: _headerState, frame: primaryRect)
+            case .promo:
+                primary = ChatSponsoredView(chatInteraction, state: _headerState, frame: primaryRect)
+            case .none:
+                primary = nil
+            }
+            primary?.autoresizingMask = [.width]
+        } else {
+            primary = p_v
+            (primary as? ChatHeaderProtocol)?.update(with: _headerState, animated: animated)
         }
-        view?.frame = NSMakeRect(0, 0, size.width, size.height)
-        return view
+        if let _ = self._headerState.voiceChat {
+            if s_v == nil || s_v?.className != NSStringFromClass(_headerState.secondaryClass ?? NSView.self) {
+                secondary = ChatGroupCallView(chatInteraction, state: _headerState, frame: secondaryRect)
+                secondary?.autoresizingMask = [.width]
+            } else {
+                secondary = s_v
+                (secondary as? ChatHeaderProtocol)?.update(with: _headerState, animated: animated)
+            }
+        } else {
+            secondary = nil
+        }
+
+        primary?.setFrameSize(primarySize)
+        secondary?.setFrameSize(secondarySize)
+        return (primary: primary, secondary: secondary)
     }
     
     init(_ chatInteraction:ChatInteraction) {
@@ -164,55 +338,121 @@ struct ChatSearchInteractions {
 private class ChatSponsoredModel: ChatAccessoryModel {
     
 
-    init() {
+    init(title: String, text: String) {
         super.init()
-        update()
+        update(title: title, text: text)
     }
     
-    func update() {
-        self.headerAttr = .initialize(string: L10n.chatProxySponsoredCapTitle, color: theme.colors.link, font: .medium(.text))
-        self.messageAttr = .initialize(string: L10n.chatProxySponsoredCapDesc, color: theme.colors.text, font: .normal(.text))
+    func update(title: String, text: String) {
+        //L10n.chatProxySponsoredCapTitle
+        self.headerAttr = .initialize(string: title, color: theme.colors.link, font: .medium(.text))
+        self.messageAttr = .initialize(string: text, color: theme.colors.text, font: .normal(.text))
         nodeReady.set(.single(true))
         self.setNeedDisplay()
     }
 }
 
-private final class ChatSponsoredView : Control {
+private extension PromoChatListItem.Kind {
+    var title: String {
+        switch self {
+        case .proxy:
+            return L10n.chatProxySponsoredCapTitle
+        case .psa:
+            return L10n.psaChatTitle
+        }
+    }
+    var text: String {
+        switch self {
+        case .proxy:
+            return L10n.chatProxySponsoredCapDesc
+        case let .psa(type, _):
+            return localizedPsa("psa.chat.text", type: type)
+        }
+    }
+    var learnMore: String? {
+        switch self {
+        case .proxy:
+            return nil
+        case let .psa(type, _):
+            let localized = localizedPsa("psa.chat.alert.learnmore", type: type)
+            return localized != localized ? localized : nil
+        }
+    }
+}
+
+private final class ChatSponsoredView : Control, ChatHeaderProtocol {
     private let chatInteraction:ChatInteraction
     private let container:ChatAccessoryView = ChatAccessoryView()
     private let dismiss:ImageButton = ImageButton()
-    private let node: ChatSponsoredModel = ChatSponsoredModel()
-    init(chatInteraction:ChatInteraction) {
+    private var node: ChatSponsoredModel?
+    private var kind: PromoChatListItem.Kind?
+    required init(_ chatInteraction:ChatInteraction, state: ChatHeaderState, frame: NSRect) {
         self.chatInteraction = chatInteraction
-        super.init()
+        super.init(frame: frame)
         
         dismiss.disableActions()
         self.dismiss.set(image: theme.icons.dismissPinned, for: .Normal)
         _ = self.dismiss.sizeToFit()
         
-        self.set(handler: { _ in
-            confirm(for: mainWindow, header: L10n.chatProxySponsoredAlertHeader, information: L10n.chatProxySponsoredAlertText, cancelTitle: "", thridTitle: L10n.chatProxySponsoredAlertSettings, successHandler: { result in
-                switch result {
-                case .thrid:
-                    chatInteraction.openProxySettings()
-                default:
-                    break
+        self.set(handler: { [weak self] _ in
+            guard let chatInteraction = self?.chatInteraction, let kind = self?.kind else {
+                return
+            }
+            switch kind {
+            case .proxy:
+                confirm(for: chatInteraction.context.window, header: L10n.chatProxySponsoredAlertHeader, information: L10n.chatProxySponsoredAlertText, cancelTitle: "", thridTitle: L10n.chatProxySponsoredAlertSettings, successHandler: { [weak chatInteraction] result in
+                    switch result {
+                    case .thrid:
+                        chatInteraction?.openProxySettings()
+                    default:
+                        break
+                    }
+                })
+            case .psa:
+                if let learnMore = kind.learnMore {
+                    confirm(for: chatInteraction.context.window, header: kind.title, information: kind.text, cancelTitle: "", thridTitle: learnMore, successHandler: { result in
+                        switch result {
+                        case .thrid:
+                            execute(inapp: .external(link: learnMore, false))
+                        default:
+                            break
+                        }
+                    })
                 }
-            })
+                
+            }
+            
+            
         }, for: .Click)
         
         dismiss.set(handler: { _ in
-            FastSettings.adAlertViewed()
+            FastSettings.removePromoTitle(for: chatInteraction.peerId)
             chatInteraction.update({$0.withoutInitialAction()})
         }, for: .SingleClick)
-        
-        node.view = container
-        
+
         addSubview(dismiss)
         container.userInteractionEnabled = false
         self.style = ControlStyle(backgroundColor: theme.colors.background)
         addSubview(container)
+
+        update(with: state, animated: false)
+
+    }
+
+    func update(with state: ChatHeaderState, animated: Bool) {
+        switch state {
+        case let  .promo(_, kind):
+            self.kind = kind
+        default:
+            self.kind = nil
+        }
+        if let kind = kind {
+            node = ChatSponsoredModel(title: kind.title, text: kind.text)
+            node?.view = container
+        }
+
         updateLocalizationAndTheme(theme: theme)
+        needsLayout = true
     }
     
     override func updateLocalizationAndTheme(theme: PresentationTheme) {
@@ -221,15 +461,19 @@ private final class ChatSponsoredView : Control {
         self.backgroundColor = theme.colors.background
         self.dismiss.set(image: theme.icons.dismissPinned, for: .Normal)
         container.backgroundColor = theme.colors.background
+        if let kind = kind {
+            node?.update(title: kind.title, text: kind.text)
+        }
     }
     
     override func layout() {
-        node.update()
-        node.measureSize(frame.width - 70)
-        container.setFrameSize(frame.width - 70, node.size.height)
+        if let node = node {
+            node.measureSize(frame.width - 70)
+            container.setFrameSize(frame.width - 70, node.size.height)
+        }
         container.centerY(x: 20)
         dismiss.centerY(x: frame.width - 20 - dismiss.frame.width)
-        node.setNeedDisplay()
+        node?.setNeedDisplay()
     }
     
     override func draw(_ layer: CALayer, in ctx: CGContext) {
@@ -246,51 +490,130 @@ private final class ChatSponsoredView : Control {
     }
 }
 
-class ChatPinnedView : Control {
-    private let node:ReplyModel
+class ChatPinnedView : Control, ChatHeaderProtocol {
+    private var node:ReplyModel?
     private let chatInteraction:ChatInteraction
     private let readyDisposable = MetaDisposable()
-    private let container:ChatAccessoryView = ChatAccessoryView()
+    private var container:ChatAccessoryView = ChatAccessoryView()
     private let dismiss:ImageButton = ImageButton()
     private let loadMessageDisposable = MetaDisposable()
-    init(_ messageId:MessageId, chatInteraction:ChatInteraction) {
-        node = ReplyModel(replyMessageId: messageId, account: chatInteraction.context.account, replyMessage: chatInteraction.presentation.cachedPinnedMessage, isPinned: true)
+    private var pinnedMessage: ChatPinnedMessage?
+    private let particleList: VerticalParticleListControl = VerticalParticleListControl()
+    required init(_ chatInteraction:ChatInteraction, state: ChatHeaderState, frame: NSRect) {
+
         self.chatInteraction = chatInteraction
-        super.init()
+        super.init(frame: frame)
         
         dismiss.disableActions()
-        self.dismiss.set(image: theme.icons.dismissPinned, for: .Normal)
-        _ = self.dismiss.sizeToFit()
-        
+
         self.set(handler: { [weak self] _ in
-            self?.chatInteraction.focusMessageId(nil, messageId, .center(id: 0, innerId: nil, animated: true, focus: .init(focus: true), inset: 0))
+            guard let `self` = self, let pinnedMessage = self.pinnedMessage else {
+                return
+            }
+            if self.chatInteraction.mode.threadId == pinnedMessage.messageId {
+                self.chatInteraction.scrollToTheFirst()
+            } else {
+                self.chatInteraction.focusPinnedMessageId(pinnedMessage.messageId)
+            }
+            
         }, for: .Click)
         
         dismiss.set(handler: { [weak self] _ in
-            self?.chatInteraction.updatePinned(messageId, true, false)
+            guard let `self` = self, let pinnedMessage = self.pinnedMessage else {
+                return
+            }
+            if pinnedMessage.totalCount > 1 {
+                self.chatInteraction.openPinnedMessages(pinnedMessage.messageId)
+            } else {
+                self.chatInteraction.updatePinned(pinnedMessage.messageId, true, false, false)
+            }
         }, for: .SingleClick)
         
         addSubview(dismiss)
         container.userInteractionEnabled = false
         self.style = ControlStyle(backgroundColor: theme.colors.background)
         addSubview(container)
-        node.view = container
-        readyDisposable.set(node.nodeReady.get().start(next: { [weak self] result in
-            self?.needsLayout = true
+
+        
+        particleList.frame = NSMakeRect(22, 5, 2, 34)
+        
+        addSubview(particleList)
+
+        update(with: state, animated: false)
+    }
+
+    func update(with state: ChatHeaderState, animated: Bool) {
+        switch state {
+        case let .pinned(_, message, _):
+            self.update(message, animated: animated)
+        default:
+            break
+        }
+    }
+    
+    private func update(_ pinnedMessage: ChatPinnedMessage, animated: Bool) {
+        
+        let animated = animated && (self.pinnedMessage != nil && (!pinnedMessage.isLatest || (self.pinnedMessage?.isLatest != pinnedMessage.isLatest)))
+        
+        particleList.update(count: pinnedMessage.totalCount, selectedIndex: pinnedMessage.index, animated: animated)
+        
+        self.dismiss.set(image: pinnedMessage.totalCount <= 1 ? theme.icons.dismissPinned : theme.icons.chat_pinned_list, for: .Normal)
+        
+        if pinnedMessage.messageId != self.pinnedMessage?.messageId {
+            let oldContainer = self.container
+            let newContainer = ChatAccessoryView()
+            newContainer.userInteractionEnabled = false
             
-            if !result, let chatInteraction = self?.chatInteraction {
-                _ = requestUpdatePinnedMessage(account: chatInteraction.context.account, peerId: chatInteraction.peerId, update: .clear).start()
+            let newNode = ReplyModel(replyMessageId: pinnedMessage.messageId, context: chatInteraction.context, replyMessage: pinnedMessage.message, isPinned: true, headerAsName: chatInteraction.mode.threadId != nil, customHeader: pinnedMessage.isLatest ? nil : pinnedMessage.totalCount == 2 ? L10n.chatHeaderPinnedPrevious : L10n.chatHeaderPinnedMessageNumer(pinnedMessage.totalCount - pinnedMessage.index), drawLine: false)
+            
+            newNode.view = newContainer
+            
+            addSubview(newContainer)
+            
+            let width = frame.width - (40 + (dismiss.isHidden ? 0 : 30))
+            newNode.measureSize(width)
+            newContainer.setFrameSize(width, newNode.size.height)
+            newContainer.centerY(x: 24)
+            
+            if animated {
+                let oldFrom = oldContainer.frame.origin
+                let oldTo = pinnedMessage.messageId > self.pinnedMessage!.messageId ? NSMakePoint(oldContainer.frame.minX, -oldContainer.frame.height) : NSMakePoint(oldContainer.frame.minX, frame.height)
+                
+                
+                oldContainer.layer?.animatePosition(from: oldFrom, to: oldTo, duration: 0.3, timingFunction: .spring, removeOnCompletion: false, completion: { [weak oldContainer] _ in
+                    oldContainer?.removeFromSuperview()
+                })
+                oldContainer.layer?.animateAlpha(from: 1, to: 0, duration: 0.3, timingFunction: .spring, removeOnCompletion: false)
+                
+                
+                let newTo = newContainer.frame.origin
+                let newFrom = pinnedMessage.messageId < self.pinnedMessage!.messageId ? NSMakePoint(newContainer.frame.minX, -newContainer.frame.height) : NSMakePoint(newContainer.frame.minX, frame.height)
+                
+                
+                newContainer.layer?.animatePosition(from: newFrom, to: newTo, duration: 0.3, timingFunction: .spring)
+                newContainer.layer?.animateAlpha(from: 0, to: 1, duration: 0.3
+                    , timingFunction: .spring)
+            } else {
+                oldContainer.removeFromSuperview()
             }
-        }))
+            
+            self.container = newContainer
+            self.node = newNode
+        }
+        self.pinnedMessage = pinnedMessage
+
         updateLocalizationAndTheme(theme: theme)
     }
     
     override func updateLocalizationAndTheme(theme: PresentationTheme) {
         super.updateLocalizationAndTheme(theme: theme)
         let theme = (theme as! TelegramPresentationTheme)
-        node.update()
+        node?.update()
         self.backgroundColor = theme.colors.background
-        self.dismiss.set(image: theme.icons.dismissPinned, for: .Normal)
+        if let pinnedMessage = pinnedMessage {
+            self.dismiss.set(image: pinnedMessage.totalCount <= 1 ? theme.icons.dismissPinned : theme.icons.chat_pinned_list, for: .Normal)
+        }
+        self.dismiss.sizeToFit()
         container.backgroundColor = theme.colors.background
     }
     
@@ -300,11 +623,13 @@ class ChatPinnedView : Control {
     
  
     override func layout() {
-        node.measureSize(frame.width - 70)
-        container.setFrameSize(frame.width - 70, node.size.height)
-        container.centerY(x: 20)
+        if let node = node {
+            node.measureSize(frame.width - (40 + (dismiss.isHidden ? 0 : 30)))
+            container.setFrameSize(frame.width - (40 + (dismiss.isHidden ? 0 : 30)), node.size.height)
+        }
+        container.centerY(x: 24)
         dismiss.centerY(x: frame.width - 20 - dismiss.frame.width)
-        node.setNeedDisplay()
+        node?.setNeedDisplay()
     }
     
     override func draw(_ layer: CALayer, in ctx: CGContext) {
@@ -326,14 +651,17 @@ class ChatPinnedView : Control {
     }
 }
 
-class ChatReportView : Control {
+class ChatReportView : Control, ChatHeaderProtocol {
     private let chatInteraction:ChatInteraction
     private let report:TitleButton = TitleButton()
+    private let unarchiveButton = TitleButton()
     private let dismiss:ImageButton = ImageButton()
 
-    init(_ chatInteraction:ChatInteraction) {
+    private let buttonsContainer = View()
+    
+    required init(_ chatInteraction:ChatInteraction, state: ChatHeaderState, frame: NSRect) {
         self.chatInteraction = chatInteraction
-        super.init()
+        super.init(frame: frame)
         dismiss.disableActions()
         
         self.style = ControlStyle(backgroundColor: theme.colors.background)
@@ -352,10 +680,18 @@ class ChatReportView : Control {
             chatInteraction.dismissPeerStatusOptions()
         }, for: .SingleClick)
         
+        unarchiveButton.set(handler: { _ in
+            chatInteraction.unarchive()
+        }, for: .SingleClick)
+        
+
+        addSubview(buttonsContainer)
+        
         addSubview(dismiss)
-        addSubview(report)
-        updateLocalizationAndTheme(theme: theme)
+        update(with: state, animated: false)
     }
+
+
     
     override func updateLocalizationAndTheme(theme: PresentationTheme) {
         super.updateLocalizationAndTheme(theme: theme)
@@ -364,10 +700,31 @@ class ChatReportView : Control {
         report.set(text: tr(L10n.chatHeaderReportSpam), for: .Normal)
         report.style = ControlStyle(font: .normal(.text), foregroundColor: theme.colors.redUI, backgroundColor: theme.colors.background, highlightColor: theme.colors.accentSelect)
         _ = report.sizeToFit()
+        
+        unarchiveButton.set(text: L10n.peerInfoUnarchive, for: .Normal)
+        
+        unarchiveButton.style = ControlStyle(font: .normal(.text), foregroundColor: theme.colors.accent, backgroundColor: theme.colors.background, highlightColor: theme.colors.accentSelect)
+        
         self.backgroundColor = theme.colors.background
         needsLayout = true
     }
-    
+
+
+    func update(with state: ChatHeaderState, animated: Bool) {
+        buttonsContainer.removeAllSubviews()
+        switch state {
+        case let .report(_, autoArchived):
+            buttonsContainer.addSubview(report)
+
+            if autoArchived {
+                buttonsContainer.addSubview(unarchiveButton)
+            }
+        default:
+            break
+        }
+        updateLocalizationAndTheme(theme: theme)
+    }
+
     override func draw(_ layer: CALayer, in ctx: CGContext) {
         super.draw(layer, in: ctx)
         ctx.setFillColor(theme.colors.border.cgColor)
@@ -377,6 +734,23 @@ class ChatReportView : Control {
     override func layout() {
         report.center()
         dismiss.centerY(x: frame.width - dismiss.frame.width - 20)
+        
+        buttonsContainer.frame = NSMakeRect(0, 0, frame.width, frame.height - .borderSize)
+
+        var buttons:[Control] = []
+        if report.superview != nil {
+            buttons.append(report)
+        }
+        if unarchiveButton.superview != nil {
+            buttons.append(unarchiveButton)
+        }
+        
+        let buttonWidth: CGFloat = floor(buttonsContainer.frame.width / CGFloat(buttons.count))
+        var x: CGFloat = 0
+        for button in buttons {
+            button.frame = NSMakeRect(x, 0, buttonWidth, buttonsContainer.frame.height)
+            x += buttonWidth
+        }
     }
     
     required init?(coder: NSCoder) {
@@ -388,42 +762,40 @@ class ChatReportView : Control {
     }
 }
 
-class ShareInfoView : Control {
+class ShareInfoView : Control, ChatHeaderProtocol {
     private let chatInteraction:ChatInteraction
     private let share:TitleButton = TitleButton()
     private let dismiss:ImageButton = ImageButton()
-    init(_ chatInteraction:ChatInteraction) {
+    required init(_ chatInteraction:ChatInteraction, state: ChatHeaderState, frame: NSRect) {
         self.chatInteraction = chatInteraction
-        super.init()
+        super.init(frame: frame)
         self.style = ControlStyle(backgroundColor: theme.colors.background)
         dismiss.disableActions()
         
         dismiss.set(image: theme.icons.dismissPinned, for: .Normal)
         _ = dismiss.sizeToFit()
         
-        share.set(handler: { _ in
-            chatInteraction.shareSelfContact(nil)
-            chatInteraction.dismissPeerStatusOptions()
+        share.set(handler: { [weak self] _ in
+            self?.chatInteraction.shareSelfContact(nil)
+            self?.chatInteraction.dismissPeerStatusOptions()
         }, for: .SingleClick)
         
-        dismiss.set(handler: { _ in
-            chatInteraction.dismissPeerStatusOptions()
+        dismiss.set(handler: { [weak self] _ in
+            self?.chatInteraction.dismissPeerStatusOptions()
         }, for: .SingleClick)
         
-        
-        
+
         addSubview(share)
         addSubview(dismiss)
         updateLocalizationAndTheme(theme: theme)
     }
-    
+
+    func update(with state: ChatHeaderState, animated: Bool) {
+
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        
-        if window == nil {
-            var bp:Int = 0
-            bp += 1
-        }
     }
     
     override func updateLocalizationAndTheme(theme: PresentationTheme) {
@@ -459,43 +831,44 @@ class ShareInfoView : Control {
     }
 }
 
-class AddContactView : Control {
+class AddContactView : Control, ChatHeaderProtocol {
     private let chatInteraction:ChatInteraction
     private let add:TitleButton = TitleButton()
     private let dismiss:ImageButton = ImageButton()
     private let blockButton: TitleButton = TitleButton()
+    private let unarchiveButton = TitleButton()
     private let buttonsContainer = View()
-    init(_ chatInteraction:ChatInteraction, canBlock: Bool) {
+    required init(_ chatInteraction:ChatInteraction, state: ChatHeaderState, frame: NSRect) {
         self.chatInteraction = chatInteraction
-        super.init()
+        super.init(frame: frame)
         self.style = ControlStyle(backgroundColor: theme.colors.background)
         dismiss.disableActions()
         
         dismiss.set(image: theme.icons.dismissPinned, for: .Normal)
         _ = dismiss.sizeToFit()
 
-        add.set(handler: { _ in
-            chatInteraction.addContact()
+        add.set(handler: { [weak self] _ in
+            self?.chatInteraction.addContact()
         }, for: .SingleClick)
         
-        dismiss.set(handler: { _ in
-            chatInteraction.dismissPeerStatusOptions()
+        dismiss.set(handler: { [weak self] _ in
+            self?.chatInteraction.dismissPeerStatusOptions()
         }, for: .SingleClick)
         
-        blockButton.set(handler: { _ in
-            chatInteraction.blockContact()
+        blockButton.set(handler: { [weak self] _ in
+            self?.chatInteraction.blockContact()
         }, for: .SingleClick)
         
+        unarchiveButton.set(handler: { [weak self] _ in
+            self?.chatInteraction.unarchive()
+        }, for: .SingleClick)
+
         
-       
-        
-        buttonsContainer.addSubview(add)
-        if canBlock {
-            buttonsContainer.addSubview(blockButton)
-        }
         addSubview(buttonsContainer)
         addSubview(dismiss)
-        updateLocalizationAndTheme(theme: theme)
+       
+        update(with: state, animated: false)
+        
     }
     
     override func updateLocalizationAndTheme(theme: PresentationTheme) {
@@ -511,9 +884,35 @@ class AddContactView : Control {
             add.set(text: L10n.peerInfoAddContact, for: .Normal)
         }
         blockButton.set(text: L10n.peerInfoBlockUser, for: .Normal)
-
+        unarchiveButton.set(text: L10n.peerInfoUnarchive, for: .Normal)
+        
+        unarchiveButton.style = ControlStyle(font: .normal(.text), foregroundColor: theme.colors.accent, backgroundColor: theme.colors.background, highlightColor: theme.colors.accentSelect)
         
         self.backgroundColor = theme.colors.background
+        needsLayout = true
+    }
+
+    func update(with state: ChatHeaderState, animated: Bool) {
+        switch state {
+        case let .addContact(_, canBlock, autoArchived):
+            buttonsContainer.removeAllSubviews()
+
+            if canBlock {
+                buttonsContainer.addSubview(blockButton)
+            }
+            if autoArchived {
+                buttonsContainer.addSubview(unarchiveButton)
+            }
+
+            if !autoArchived && canBlock {
+                buttonsContainer.addSubview(add)
+            } else if !autoArchived && !canBlock {
+                buttonsContainer.addSubview(add)
+            }
+        default:
+            break
+        }
+        updateLocalizationAndTheme(theme: theme)
         needsLayout = true
     }
     
@@ -525,14 +924,28 @@ class AddContactView : Control {
     
     override func layout() {
         dismiss.centerY(x: frame.width - dismiss.frame.width - 20)
-        if blockButton.superview == nil {
-            buttonsContainer.frame = NSMakeRect(0, 0, frame.width, frame.height - .borderSize)
-            add.setFrameSize(NSMakeSize(add.frame.width, buttonsContainer.frame.height))
-            add.center()
-        } else {
-            buttonsContainer.frame = NSMakeRect(0, 0, frame.width - (frame.width - dismiss.frame.minX), frame.height - .borderSize)
-            add.frame = NSMakeRect(buttonsContainer.frame.width / 2, 0, buttonsContainer.frame.width / 2, buttonsContainer.frame.height)
-            blockButton.frame = NSMakeRect(0, 0, buttonsContainer.frame.width / 2, buttonsContainer.frame.height)
+        
+        var buttons:[Control] = []
+        
+        
+        if add.superview != nil {
+            buttons.append(add)
+        }
+        if blockButton.superview != nil {
+            buttons.append(blockButton)
+        }
+        if unarchiveButton.superview != nil {
+            buttons.append(unarchiveButton)
+        }
+        
+        buttonsContainer.frame = NSMakeRect(0, 0, frame.width - (frame.width - dismiss.frame.minX), frame.height - .borderSize)
+
+        
+        let buttonWidth: CGFloat = floor(buttonsContainer.frame.width / CGFloat(buttons.count))
+        var x: CGFloat = 0
+        for button in buttons {
+            button.frame = NSMakeRect(x, 0, buttonWidth, buttonsContainer.frame.height)
+            x += buttonWidth
         }
     }
     
@@ -653,7 +1066,7 @@ struct SearchMessagesResultState : Equatable {
     }
 }
 
-class ChatSearchHeader : View, Notifable {
+class ChatSearchHeader : View, Notifable, ChatHeaderProtocol {
     
     private let searchView:ChatSearchView = ChatSearchView(frame: NSZeroRect)
     private let cancel:ImageButton = ImageButton()
@@ -679,14 +1092,25 @@ class ChatSearchHeader : View, Notifable {
     private let loadingDisposable = MetaDisposable()
    
     private let calendarController: CalendarController
-    init(_ interactions:ChatSearchInteractions, chatInteraction: ChatInteraction, initialPeer: Peer?) {
-        self.interactions = interactions
-        self.parentInteractions = chatInteraction
-        self.calendarController = CalendarController(NSMakeRect(0, 0, 250, 250), chatInteraction.context.window, selectHandler: interactions.calendarAction)
-        self.chatInteraction = ChatInteraction(chatLocation: chatInteraction.chatLocation, context: chatInteraction.context)
-        self.chatInteraction.update({$0.updatedPeer({_ in chatInteraction.presentation.peer})})
-        self.inputContextHelper = InputContextHelper(chatInteraction: self.chatInteraction, highlightInsteadOfSelect: true)
-        
+    required init(_ chatInteraction: ChatInteraction, state: ChatHeaderState, frame: NSRect) {
+
+        switch state {
+        case let .search(_, interactions, _, initialString):
+            self.interactions = interactions
+            self.parentInteractions = chatInteraction
+            self.calendarController = CalendarController(NSMakeRect(0, 0, 250, 250), chatInteraction.context.window, selectHandler: interactions.calendarAction)
+            self.chatInteraction = ChatInteraction(chatLocation: chatInteraction.chatLocation, context: chatInteraction.context, mode: chatInteraction.mode)
+            self.chatInteraction.update({$0.updatedPeer({_ in chatInteraction.presentation.peer})})
+            self.inputContextHelper = InputContextHelper(chatInteraction: self.chatInteraction, highlightInsteadOfSelect: true)
+
+            if let initialString = initialString {
+                searchView.setString(initialString)
+                self.query.set(SearchStateQuery(initialString, nil))
+            }
+        default:
+            fatalError()
+        }
+
         super.init()
         
         self.chatInteraction.movePeerToInput = { [weak self] peer in
@@ -713,31 +1137,40 @@ class ChatSearchHeader : View, Notifable {
         self.loadingDisposable.set((parentInteractions.loadingMessage.get() |> deliverOnMainQueue).start(next: { [weak self] loading in
             self?.searchView.isLoading = loading
         }))
-        if let initialPeer = initialPeer {
-            self.chatInteraction.movePeerToInput(initialPeer)
-            Queue.mainQueue().justDispatch {
-                self.searchView.change(state: .Focus, false)
+        switch state {
+        case let .search(_, _, initialPeer, _):
+            if let initialPeer = initialPeer {
+                self.chatInteraction.movePeerToInput(initialPeer)
             }
+        default:
+            break
         }
-      
+        Queue.mainQueue().justDispatch { [weak self] in
+            self?.applySearchResponder(false)
+        }
     }
     
-    func applySearchResponder() {
+    func update(with state: ChatHeaderState, animated: Bool) {
+        
+    }
+
+    
+    func applySearchResponder(_ animated: Bool = false) {
        // _ = window?.makeFirstResponder(searchView.input)
         searchView.layout()
         if searchView.state == .Focus && window?.firstResponder != searchView.input {
             _ = window?.makeFirstResponder(searchView.input)
         }
-        searchView.change(state: .Focus, false)
+        searchView.change(state: .Focus, animated)
     }
     
     private var calendarAbility: Bool {
-        return true
+        return chatInteraction.mode != .scheduled && chatInteraction.mode != .pinned
     }
     
     private var fromAbility: Bool {
         if let peer = chatInteraction.presentation.peer {
-            return peer.isSupergroup || peer.isGroup
+            return (peer.isSupergroup || peer.isGroup) && (chatInteraction.mode == .history || chatInteraction.mode.isThreadMode)
         } else {
             return false
         }
@@ -745,7 +1178,7 @@ class ChatSearchHeader : View, Notifable {
     
     func notify(with value: Any, oldValue: Any, animated: Bool) {
         let context = chatInteraction.context
-        if let value = value as? CSearchContextState, let oldValue = oldValue as? CSearchContextState, let view = superview {
+        if let value = value as? CSearchContextState, let oldValue = oldValue as? CSearchContextState, let superview = superview, let view = superview.superview {
             
             let stateValue = self.query
             
@@ -758,7 +1191,7 @@ class ChatSearchHeader : View, Notifable {
             
             if let peer = chatInteraction.presentation.peer {
                 if value.inputQueryResult != oldValue.inputQueryResult {
-                    inputContextHelper.context(with: value.inputQueryResult, for: view, relativeView: self, position: .below, selectIndex: value.selectedIndex != -1 ? value.selectedIndex : nil, animated: animated)
+                    inputContextHelper.context(with: value.inputQueryResult, for: view, relativeView: superview, position: .below, selectIndex: value.selectedIndex != -1 ? value.selectedIndex : nil, animated: animated)
                 }
                 switch value.tokenState {
                 case .none:
@@ -767,8 +1200,8 @@ class ChatSearchHeader : View, Notifable {
                     needsLayout = true
                     searchView.change(size: NSMakeSize(searchWidth, searchView.frame.height), animated: animated)
                     
-                    if peer.isSupergroup || peer.isGroup {
-                        if let (updatedContextQueryState, updatedContextQuerySignal) = chatContextQueryForSearchMention(peer: peer, .mention(query: value.searchState.request, includeRecent: false), currentQuery: self.contextQueryState?.0, context: context) {
+                    if (peer.isSupergroup || peer.isGroup) && chatInteraction.mode == .history {
+                        if let (updatedContextQueryState, updatedContextQuerySignal) = chatContextQueryForSearchMention(chatLocations: [chatInteraction.chatLocation], .mention(query: value.searchState.request, includeRecent: false), currentQuery: self.contextQueryState?.0, context: context) {
                             self.contextQueryState?.1.dispose()
                             self.contextQueryState = (updatedContextQueryState, (updatedContextQuerySignal |> deliverOnMainQueue).start(next: { [weak self] result in
                                 if let strongSelf = self {
@@ -820,7 +1253,7 @@ class ChatSearchHeader : View, Notifable {
                             }
                         })
                     } else {
-                        if let (updatedContextQueryState, updatedContextQuerySignal) = chatContextQueryForSearchMention(peer: peer, .mention(query: query, includeRecent: false), currentQuery: self.contextQueryState?.0, context: context) {
+                        if let (updatedContextQueryState, updatedContextQuerySignal) = chatContextQueryForSearchMention(chatLocations: [chatInteraction.chatLocation], .mention(query: query, includeRecent: false), currentQuery: self.contextQueryState?.0, context: context) {
                             self.contextQueryState?.1.dispose()
                             var inScope = true
                             var inScopeResult: ((ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?)?
@@ -1117,6 +1550,438 @@ class ChatSearchHeader : View, Notifable {
         self.calendarController = CalendarController(NSMakeRect(0,0,250,250), chatInteraction.context.window, selectHandler: interactions.calendarAction)
         super.init(frame: frameRect)
         initialize()
+    }
+    
+    required init(frame frameRect: NSRect) {
+        fatalError("init(frame:) has not been implemented")
+    }
+}
+
+
+private final class FakeAudioLevelGenerator {
+    private var isFirstTime: Bool = true
+    private var nextTarget: Float = 0.0
+    private var nextTargetProgress: Float = 0.0
+    private var nextTargetProgressNorm: Float = 1.0
+
+    func get() -> Float {
+        let wasFirstTime = self.isFirstTime
+        self.isFirstTime = false
+
+        self.nextTargetProgress *= 0.82
+        if self.nextTargetProgress <= 0.01 {
+            if Int.random(in: 0 ... 4) <= 1 && !wasFirstTime {
+                self.nextTarget = 0.0
+                self.nextTargetProgressNorm = Float.random(in: 0.1 ..< 0.3)
+            } else {
+                self.nextTarget = Float.random(in: 0.0 ..< 20.0)
+                self.nextTargetProgressNorm = Float.random(in: 0.2 ..< 0.7)
+            }
+            self.nextTargetProgress = self.nextTargetProgressNorm
+            return self.nextTarget
+        } else {
+            let value = self.nextTarget * max(0.0, self.nextTargetProgress / self.nextTargetProgressNorm)
+            return value
+        }
+    }
+}
+
+private final class TimerButtonView : Control {
+    private var nextTimer: SwiftSignalKit.Timer?
+    private let counter = DynamicCounterTextView(frame: .zero)
+    required init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        addSubview(counter)
+        scaleOnClick = true
+    }
+    
+    override func draw(_ layer: CALayer, in ctx: CGContext) {
+        super.draw(layer, in: ctx)
+        
+        let purple = NSColor(rgb: 0x3252ef)
+        let pink = NSColor(rgb: 0xef436c)
+        
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var locations:[CGFloat] = [0.0, 0.85, 1.0]
+        let gradient = CGGradient(colorsSpace: colorSpace, colors: [pink.cgColor, purple.cgColor, purple.cgColor] as CFArray, locations: &locations)!
+        ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0.0), end: CGPoint(x: frame.width, y: frame.height), options: [])
+    }
+    
+    func setTime(_ timeValue: Int32, animated: Bool, layout: @escaping(NSSize, NSView)->Void) {
+        let time = Int(timeValue - Int32(Date().timeIntervalSince1970))
+        
+        let text = timerText(time)
+        let value = DynamicCounterTextView.make(for: text, count: text, font: .avatar(13), textColor: .white, width: .greatestFiniteMagnitude)
+        
+        counter.update(value, animated: animated)
+        counter.change(size: value.size, animated: animated)
+
+        layout(value.size, self)
+        var point = focus(value.size).origin
+        point = point.offset(dx: 2, dy: 0)
+        counter.change(pos: point, animated: animated)
+        
+        
+        self.nextTimer = SwiftSignalKit.Timer(timeout: 0.5, repeat: false, completion: { [weak self] in
+            self?.setTime(timeValue, animated: true, layout: layout)
+        }, queue: .mainQueue())
+        
+        nextTimer?.start()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+
+private final class ChatGroupCallView : Control, ChatHeaderProtocol {
+    
+    struct Avatar : Comparable, Identifiable {
+        static func < (lhs: Avatar, rhs: Avatar) -> Bool {
+            return lhs.index < rhs.index
+        }
+        var stableId: PeerId {
+            return peer.id
+        }
+        static func == (lhs: Avatar, rhs: Avatar) -> Bool {
+            if lhs.index != rhs.index {
+                return false
+            }
+            if !lhs.peer.isEqual(rhs.peer) {
+                return false
+            }
+            return true
+        }
+        
+        let peer: Peer
+        let index: Int
+    }
+    private var topPeers: [Avatar] = []
+    private var avatars:[AvatarContentView] = []
+    private let avatarsContainer = View(frame: NSMakeRect(0, 0, 25 * 3 + 10, 38))
+
+    private let joinButton = TitleButton()
+    private var data: ChatActiveGroupCallInfo?
+    private let chatInteraction: ChatInteraction
+    private let headerView = TextView()
+    private let membersCountView = DynamicCounterTextView()
+    private let button = Control()
+
+    private var scheduleButton: TimerButtonView?
+
+    private var audioLevelGenerators: [PeerId: FakeAudioLevelGenerator] = [:]
+    private var audioLevelGeneratorTimer: SwiftSignalKit.Timer?
+
+
+    required init(_ chatInteraction: ChatInteraction, state: ChatHeaderState, frame: NSRect) {
+        self.chatInteraction = chatInteraction
+        super.init(frame: frame)
+        addSubview(headerView)
+        addSubview(membersCountView)
+        addSubview(avatarsContainer)
+        addSubview(button)
+        addSubview(joinButton)
+        avatarsContainer.isEventLess = true
+        
+        
+        headerView.userInteractionEnabled = false
+        headerView.isSelectable = false
+        membersCountView.userInteractionEnabled = false
+
+        joinButton.set(handler: { [weak self] _ in
+            if let `self` = self, let data = self.data {
+                self.chatInteraction.joinGroupCall(data.activeCall, data.joinHash)
+            }
+        }, for: .SingleClick)
+        
+        
+        button.set(handler: { [weak self] _ in
+            if let `self` = self, let data = self.data {
+                self.chatInteraction.joinGroupCall(data.activeCall, data.joinHash)
+            }
+        }, for: .SingleClick)
+        
+        button.set(handler: { [weak self] _ in
+            self?.headerView.change(opacity: 0.6, animated: true)
+            self?.membersCountView.change(opacity: 0.6, animated: true)
+            self?.avatarsContainer.change(opacity: 0.6, animated: true)
+        }, for: .Highlight)
+        
+        button.set(handler: { [weak self] _ in
+            self?.headerView.change(opacity: 1, animated: true)
+            self?.membersCountView.change(opacity: 1, animated: true)
+            self?.avatarsContainer.change(opacity: 1.0, animated: true)
+        }, for: .Normal)
+        
+        button.set(handler: { [weak self] _ in
+            self?.headerView.change(opacity: 1, animated: true)
+            self?.membersCountView.change(opacity: 1, animated: true)
+            self?.avatarsContainer.change(opacity: 1.0, animated: true)
+        }, for: .Hover)
+
+        joinButton.scaleOnClick = true
+
+        self.avatarsContainer.center()
+
+        self.update(with: state, animated: false)
+        updateLocalizationAndTheme(theme: theme)
+    }
+    
+
+    func update(with state: ChatHeaderState, animated: Bool) {
+        if let data = state.voiceChat {
+            self.update(data, animated: animated)
+        }
+    }
+
+    func update(_ data: ChatActiveGroupCallInfo, animated: Bool) {
+        
+        let context = self.chatInteraction.context
+        
+        let activeCall = data.data?.groupCall != nil
+        joinButton.change(opacity: activeCall ? 0 : 1, animated: animated)
+        joinButton.userInteractionEnabled = !activeCall
+        joinButton.isEventLess = activeCall
+        
+        let duration: Double = 0.4
+        let timingFunction: CAMediaTimingFunctionName = .spring
+
+
+        var topPeers: [Avatar] = []
+        if let participants = data.data?.topParticipants {
+            var index:Int = 0
+            let participants = participants
+            for participant in participants {
+                topPeers.append(Avatar(peer: participant.peer, index: index))
+                index += 1
+            }
+
+
+        }
+        let (removed, inserted, updated) = mergeListsStableWithUpdates(leftList: self.topPeers, rightList: topPeers)
+        
+        let avatarSize = NSMakeSize(38, 38)
+        
+        for removed in removed.reversed() {
+            let control = avatars.remove(at: removed)
+            let peer = self.topPeers[removed]
+            let haveNext = topPeers.contains(where: { $0.stableId == peer.stableId })
+            control.updateLayout(size: avatarSize - NSMakeSize(8, 8), isClipped: false, animated: animated)
+            control.layer?.opacity = 0
+            if animated && !haveNext {
+                control.layer?.animateAlpha(from: 1, to: 0, duration: duration, timingFunction: timingFunction, removeOnCompletion: false, completion: { [weak control] _ in
+                    control?.removeFromSuperview()
+                })
+                control.layer?.animateScaleSpring(from: 1.0, to: 0.2, duration: duration, bounce: false)
+            } else {
+                control.removeFromSuperview()
+            }
+        }
+        for inserted in inserted {
+            let control = AvatarContentView(context: context, peer: inserted.1.peer, message: nil, synchronousLoad: false, size: avatarSize, inset: 6)
+            control.updateLayout(size: avatarSize - NSMakeSize(8, 8), isClipped: inserted.0 != 0, animated: animated)
+            control.userInteractionEnabled = false
+            control.setFrameSize(avatarSize)
+            control.setFrameOrigin(NSMakePoint(CGFloat(inserted.0) * (avatarSize.width - 14), 0))
+            avatars.insert(control, at: inserted.0)
+            avatarsContainer.subviews.insert(control, at: inserted.0)
+            if animated {
+                if let index = inserted.2 {
+                    control.layer?.animatePosition(from: NSMakePoint(CGFloat(index) * (avatarSize.width - 14), 0), to: control.frame.origin, timingFunction: timingFunction)
+                } else {
+                    control.layer?.animateAlpha(from: 0, to: 1, duration: duration, timingFunction: timingFunction)
+                    control.layer?.animateScaleSpring(from: 0.2, to: 1.0, duration: duration, bounce: false)
+                }
+            }
+        }
+        for updated in updated {
+            let control = avatars[updated.0]
+            control.updateLayout(size: avatarSize - NSMakeSize(8, 8), isClipped: updated.0 != 0, animated: animated)
+            let updatedPoint = NSMakePoint(CGFloat(updated.0) * (avatarSize.width - 14), 0)
+            if animated {
+                control.layer?.animatePosition(from: control.frame.origin - updatedPoint, to: .zero, duration: duration, timingFunction: timingFunction, additive: true)
+            }
+            control.setFrameOrigin(updatedPoint)
+        }
+        var index: CGFloat = 10
+        for control in avatarsContainer.subviews.compactMap({ $0 as? AvatarContentView }) {
+            control.layer?.zPosition = index
+            index -= 1
+        }
+
+
+
+        if let data = data.data, data.groupCall == nil {
+
+            var activeSpeakers = data.activeSpeakers
+
+            for peerId in activeSpeakers {
+                if self.audioLevelGenerators[peerId] == nil {
+                    self.audioLevelGenerators[peerId] = FakeAudioLevelGenerator()
+                }
+            }
+            var removeGenerators: [PeerId] = []
+            for peerId in self.audioLevelGenerators.keys {
+                if !activeSpeakers.contains(peerId) {
+                    removeGenerators.append(peerId)
+                }
+            }
+            for peerId in removeGenerators {
+                self.audioLevelGenerators.removeValue(forKey: peerId)
+            }
+
+            if self.audioLevelGenerators.isEmpty {
+                self.audioLevelGeneratorTimer?.invalidate()
+                self.audioLevelGeneratorTimer = nil
+                self.sampleAudioGenerators()
+            } else if self.audioLevelGeneratorTimer == nil {
+                let audioLevelGeneratorTimer = SwiftSignalKit.Timer(timeout: 1.0 / 30.0, repeat: true, completion: { [weak self] in
+                    self?.sampleAudioGenerators()
+                }, queue: .mainQueue())
+                self.audioLevelGeneratorTimer = audioLevelGeneratorTimer
+                audioLevelGeneratorTimer.start()
+            }
+        }
+
+        let subviewsCount = max(avatarsContainer.subviews.filter { $0.layer?.opacity == 1.0 }.count, 1)
+
+        if subviewsCount == 3 {
+            self.avatarsContainer.setFrameOrigin(self.focus(self.avatarsContainer.frame.size).origin)
+        } else {
+            let count = CGFloat(subviewsCount)
+            if count != 0 {
+                let animated = animated && self.data?.data?.activeSpeakers.count != 0
+                let avatarSize: CGFloat = avatarsContainer.subviews.map { $0.frame.maxX }.max() ?? 0
+                let pos = NSMakePoint(floorToScreenPixels(backingScaleFactor, (frame.width - avatarSize) / 2), self.avatarsContainer.frame.minY)
+                self.avatarsContainer.change(pos: pos, animated: animated)
+            }
+        }
+        let participantsCount = data.data?.participantCount ?? 0
+
+        var text: String
+        let pretty: String
+        if let scheduledDate = data.activeCall.scheduleTimestamp, participantsCount == 0 {
+            text = L10n.chatGroupCallScheduledStatus(stringForMediumDate(timestamp: scheduledDate))
+            pretty = ""
+            var presented = false
+            let current: TimerButtonView
+            if let button = self.scheduleButton {
+                current = button
+            } else {
+                current = TimerButtonView(frame: NSMakeRect(0, 0, 60, 24))
+                self.scheduleButton = current
+                current.layer?.cornerRadius = current.frame.height / 2
+                addSubview(current)
+                presented = true
+                
+                current.set(handler: { [weak self] _ in
+                    if let `self` = self, let data = self.data {
+                        self.chatInteraction.joinGroupCall(data.activeCall, data.joinHash)
+                    }
+                }, for: .SingleClick)
+
+            }
+            current.setTime(scheduledDate, animated: animated, layout: { [weak self] size, button in
+                guard let strongSelf = self else {
+                    return
+                }
+                let animated = animated && !presented
+                let size = NSMakeSize(size.width + 10, button.frame.height)
+                button._change(size: size, animated: animated)
+                button._change(pos: button.centerFrameY(x: strongSelf.frame.width - button.frame.width - 23).origin, animated: animated)
+                presented = false
+            })
+            joinButton.isHidden = true
+        } else {
+            text = L10n.chatGroupCallMembersCountable(participantsCount)
+            pretty = "\(Int(participantsCount).formattedWithSeparator)"
+            text = text.replacingOccurrences(of: "\(participantsCount)", with: pretty)
+            joinButton.isHidden = false
+            
+            self.scheduleButton?.removeFromSuperview()
+            self.scheduleButton = nil
+        }
+        let dynamicValues = DynamicCounterTextView.make(for: text, count: pretty, font: .normal(.short), textColor: theme.colors.grayText, width: frame.midX)
+
+        self.membersCountView.update(dynamicValues, animated: animated)
+        self.membersCountView.change(size: dynamicValues.size, animated: animated)
+
+
+        self.topPeers = topPeers
+        self.data = data
+        
+        let headerLayout = TextViewLayout(.initialize(string: data.activeCall.scheduleTimestamp != nil ? L10n.chatGroupCallScheduledTitle : L10n.chatGroupCallTitle, color: theme.colors.text, font: .medium(.text)))
+        headerLayout.measure(width: frame.width - 100)
+        headerView.update(headerLayout)
+
+        needsLayout = true
+
+    }
+
+    private func sampleAudioGenerators() {
+        var levels: [PeerId: Float] = [:]
+        for (peerId, generator) in self.audioLevelGenerators {
+            levels[peerId] = generator.get()
+        }
+        let avatars = avatarsContainer.subviews.compactMap { $0 as? AvatarContentView }
+        for avatar in avatars {
+            if let level = levels[avatar.peerId] {
+                avatar.updateAudioLevel(color: theme.colors.accent, value: level)
+            } else {
+                avatar.updateAudioLevel(color: theme.colors.accent, value: 0)
+            }
+        }
+    }
+
+    
+    override func updateLocalizationAndTheme(theme: PresentationTheme) {
+        super.updateLocalizationAndTheme(theme: theme)
+        backgroundColor = theme.colors.background
+        border = [.Bottom]
+        borderColor = theme.colors.border
+        joinButton.set(font: .medium(.text), for: .Normal)
+        joinButton.set(text: L10n.chatGroupCallJoin, for: .Normal)
+        joinButton.sizeToFit(NSMakeSize(14, 8), .zero, thatFit: false)
+        joinButton.layer?.cornerRadius = joinButton.frame.height / 2
+        joinButton.set(color: theme.colors.underSelectedColor, for: .Normal)
+        joinButton.set(background: theme.colors.accent, for: .Normal)
+        joinButton.set(background: theme.colors.accent.highlighted, for: .Highlight)
+        
+
+    }
+    
+    override func layout() {
+        super.layout()
+        
+        if let scheduleButton = scheduleButton {
+            scheduleButton.centerY(x: frame.width - scheduleButton.frame.width - 23)
+        }
+        joinButton.centerY(x: frame.width - joinButton.frame.width - 23)
+        
+        let subviewsCount = max(avatarsContainer.subviews.filter { $0.layer?.opacity == 1.0 }.count, 1)
+        
+        if subviewsCount == 3 || subviewsCount == 0 {
+            self.avatarsContainer.center()
+        } else {
+            let count = CGFloat(subviewsCount)
+            let avatarSize: CGFloat = (count * 30) - ((count - 1) * 3)
+            self.avatarsContainer.centerY(x: floorToScreenPixels(backingScaleFactor, (frame.width - avatarSize) / 2))
+        }
+        
+        headerView.layout?.measure(width: frame.width - 100)
+        headerView.update(headerView.layout)
+
+        
+        headerView.setFrameOrigin(.init(x: 22, y: frame.midY - headerView.frame.height))
+        membersCountView.setFrameOrigin(.init(x: 22, y: frame.midY))
+                
+        button.frame = bounds
+    }
+    
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
     
     required init(frame frameRect: NSRect) {

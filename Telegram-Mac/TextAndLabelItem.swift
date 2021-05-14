@@ -27,21 +27,45 @@ class TextAndLabelItem: GeneralRowItem {
     let isTextSelectable:Bool
     let callback:()->Void
     let canCopy: Bool
-    init(_ initialSize:NSSize, stableId:AnyHashable, label:String, labelColor: NSColor = theme.colors.accent, text:String, context: AccountContext, viewType: GeneralViewType = .legacy, detectLinks:Bool = false, isTextSelectable:Bool = true, callback:@escaping ()->Void = {}, openInfo:((PeerId, Bool, MessageId?, ChatInitialAction?)->Void)? = nil, hashtag:((String)->Void)? = nil, selectFullWord: Bool = false, canCopy: Bool = true) {
+    
+    
+    var hasMore: Bool? = true {
+        didSet {
+            if hasMore == nil {
+                textLayout.maximumNumberOfLines = 0
+                textLayout.cutout = nil
+                _ = makeSize(width, oldWidth: 0)
+                
+                if let table = self.table {
+                    table.enumerateItems { item -> Bool in
+                        item.table?.reloadData(row: item.index, animated: true)
+                        return true
+                    }
+                }
+
+            }
+        }
+    }
+    
+    let moreLayout: TextViewLayout
+    let copyMenuText: String
+    let _copyToClipboard:(()->Void)?
+    init(_ initialSize:NSSize, stableId:AnyHashable, label:String, copyMenuText: String, labelColor: NSColor = theme.colors.accent, text:String, context: AccountContext, viewType: GeneralViewType = .legacy, detectLinks:Bool = false, onlyInApp: Bool = false, isTextSelectable:Bool = true, callback:@escaping ()->Void = {}, openInfo:((PeerId, Bool, MessageId?, ChatInitialAction?)->Void)? = nil, hashtag:((String)->Void)? = nil, selectFullWord: Bool = false, canCopy: Bool = true, _copyToClipboard:(()->Void)? = nil) {
         self.callback = callback
         self.isTextSelectable = isTextSelectable
+        self.copyMenuText = copyMenuText
         self.label = NSAttributedString.initialize(string: label, color: labelColor, font: .normal(FontSize.text))
         let attr = NSMutableAttributedString()
         _ = attr.append(string: text.trimmed.fullTrimmed, color: theme.colors.text, font: .normal(.title))
         if detectLinks {
-            attr.detectLinks(type: [.Links, .Hashtags, .Mentions], context: context, color: theme.colors.link, openInfo: openInfo, hashtag: hashtag, applyProxy: { settings in
+            attr.detectLinks(type: [.Links, .Hashtags, .Mentions], onlyInApp: onlyInApp, context: context, color: theme.colors.link, openInfo: openInfo, hashtag: hashtag, applyProxy: { settings in
                 applyExternalProxy(settings, accountManager: context.sharedContext.accountManager)
             })
         }
         self.canCopy = canCopy
+        self._copyToClipboard = _copyToClipboard
         
-        
-        textLayout = TextViewLayout(attr, alwaysStaticItems: !detectLinks)
+        textLayout = TextViewLayout(attr, maximumNumberOfLines: 3, alwaysStaticItems: !detectLinks)
         textLayout.interactions = globalLinkExecutor
         textLayout.selectWholeText = !detectLinks
         if selectFullWord {
@@ -51,7 +75,23 @@ class TextAndLabelItem: GeneralRowItem {
             }
         }
         
+        var showFull:(()->Void)? = nil
+        
+        let moreAttr = parseMarkdownIntoAttributedString(L10n.peerInfoShowMoreText, attributes: MarkdownAttributes(body: MarkdownAttributeSet(font: .normal(.title), textColor: theme.colors.text), bold: MarkdownAttributeSet(font: .bold(.title), textColor: theme.colors.text), link: MarkdownAttributeSet(font: .normal(.title), textColor: theme.colors.link), linkAttribute: { contents in
+            return (NSAttributedString.Key.link.rawValue, inAppLink.callback(contents, { _ in
+                showFull?()
+            }))
+        }))
+        self.moreLayout = TextViewLayout(moreAttr)
+        self.moreLayout.interactions = globalLinkExecutor
+        
+        
+        self.moreLayout.measure(width: .greatestFiniteMagnitude)
         super.init(initialSize,stableId: stableId, type: .none, viewType: viewType, action: callback, drawCustomSeparator: true)
+        
+        showFull = { [weak self] in
+            self?.hasMore = nil
+        }
     }
     
     override func viewClass() -> AnyClass {
@@ -100,7 +140,7 @@ class TextAndLabelItem: GeneralRowItem {
         if !canCopy {
             return .single([])
         } else {
-            return .single([ContextMenuItem(L10n.textCopyLabel(self.label.string.components(separatedBy: " ").map{$0.capitalizingFirstLetter()}.joined(separator: " ")), handler: { [weak self] in
+            return .single([ContextMenuItem(self.copyMenuText, handler: { [weak self] in
                 if let strongSelf = self {
                     copyToClipboard(strongSelf.textLayout.attributedString.string)
                 }
@@ -112,6 +152,15 @@ class TextAndLabelItem: GeneralRowItem {
     override func makeSize(_ width: CGFloat, oldWidth:CGFloat) -> Bool {
         let result = super.makeSize(width, oldWidth: oldWidth)
         textLayout.measure(width: textWidth)
+        
+        if hasMore != nil {
+            hasMore = !textLayout.isPerfectSized
+        }
+        if hasMore == true {
+            textLayout.cutout = TextViewCutout(bottomRight: NSMakeSize(moreLayout.layoutSize.width + 10, 0))
+            textLayout.measure(width: textWidth)
+        }
+        
         labelLayout = TextNode.layoutText(maybeNode: nil,  label, nil, 1, .end, NSMakeSize(textWidth, .greatestFiniteMagnitude), nil, false, .left)
         return result
     }
@@ -121,7 +170,8 @@ class TextAndLabelItem: GeneralRowItem {
 class TextAndLabelRowView: GeneralRowView {
     private let containerView = GeneralRowContainerView(frame: NSZeroRect)
     private var labelView:TextView = TextView()
-    
+    private let moreView: TextView = TextView()
+    private let copyView: ImageButton = ImageButton()
     override func draw(_ layer: CALayer, in ctx: CGContext) {
         
         if let item = item as? TextAndLabelItem, let label = item.labelLayout, layer == containerView.layer {
@@ -172,11 +222,22 @@ class TextAndLabelRowView: GeneralRowView {
         self.addSubview(self.containerView)
         self.containerView.displayDelegate = self
         self.containerView.userInteractionEnabled = false
+        containerView.addSubview(moreView)
         labelView.set(handler: { [weak self] _ in
             if let item = self?.item as? TextAndLabelItem {
                 item.action()
             }
         }, for: .Click)
+        
+        copyView.autohighlight = true
+        
+        copyView.set(handler: { [weak self] _ in
+            if let item = self?.item as? TextAndLabelItem {
+                item._copyToClipboard?()
+            }
+        }, for: .Click)
+        
+        containerView.addSubview(copyView)
     }
     
     override func layout() {
@@ -191,7 +252,8 @@ class TextAndLabelRowView: GeneralRowView {
                 } else {
                     labelView.centerY(x:item.inset.left)
                 }
-            case let .modern(position, innerInsets):
+                copyView.centerY(x: containerView.frame.width - copyView.frame.width - item.inset.left)
+            case let .modern(_, innerInsets):
                 self.containerView.frame = NSMakeRect(floorToScreenPixels(backingScaleFactor, (frame.width - item.blockWidth) / 2), item.inset.top, item.blockWidth, frame.height - item.inset.bottom - item.inset.top)
 
                 if let _ = item.labelLayout {
@@ -199,6 +261,10 @@ class TextAndLabelRowView: GeneralRowView {
                 } else {
                     labelView.centerY(x: innerInsets.left)
                 }
+                
+                copyView.centerY(x: containerView.frame.width - copyView.frame.width - innerInsets.right)
+
+                moreView.setFrameOrigin(NSMakePoint(containerView.frame.width - moreView.frame.width - innerInsets.right, containerView.frame.height - innerInsets.bottom - moreView.frame.height + 2))
             }
             self.containerView.setCorners(item.viewType.corners)
 
@@ -215,6 +281,14 @@ class TextAndLabelRowView: GeneralRowView {
             labelView.userInteractionEnabled = item.canCopy
             labelView.isSelectable = item.isTextSelectable
             labelView.update(item.textLayout)
+            
+            moreView.isHidden = item.hasMore != true
+            moreView.update(item.moreLayout)
+            
+            copyView.set(image: theme.icons.fast_copy_link, for: .Normal)
+            copyView.sizeToFit()
+            copyView.scaleOnClick = true
+            copyView.isHidden = item._copyToClipboard == nil
         }
         containerView.needsDisplay = true
         needsLayout = true

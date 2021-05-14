@@ -108,6 +108,7 @@ final class PeerMediaVoiceRowView : PeerMediaRowView, APDelegate {
             NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSWindow.didBecomeKeyNotification, object: window)
             NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSWindow.didResignKeyNotification, object: window)
             NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSView.boundsDidChangeNotification, object: item?.table?.clipView)
+            NotificationCenter.default.addObserver(self, selector: #selector(updatePlayerIfNeeded), name: NSView.frameDidChangeNotification, object: item?.table?.view)
         } else {
             removeNotificationListeners()
         }
@@ -123,11 +124,9 @@ final class PeerMediaVoiceRowView : PeerMediaRowView, APDelegate {
         
         guard let item = item as? PeerMediaVoiceRowItem else {return}
 
-        if let controller = globalAudio, let song = controller.currentSong, song.entry.isEqual(to: item.message) {
-            controller.playOrPause()
+        if let controller = globalAudio, controller.playOrPause(item.message.id) {
         } else {
-            
-            let controller:APController = APChatVoiceController(account: item.interface.context.account, peerId: item.message.id.peerId, index: MessageIndex(item.message))
+            let controller:APController = APChatVoiceController(context: item.interface.context, chatLocationInput: .peer(item.message.id.peerId), mode: .history, index: MessageIndex(item.message), volume: FastSettings.volumeRate)
             item.interface.inlineAudioPlayer(controller)
             controller.start()
         }
@@ -148,24 +147,24 @@ final class PeerMediaVoiceRowView : PeerMediaRowView, APDelegate {
         }
     }
     
-    func songDidChanged(song: APSongItem, for controller: APController) {
+    func songDidChanged(song: APSongItem, for controller: APController, animated: Bool) {
         checkState()
     }
-    func songDidChangedState(song: APSongItem, for controller: APController) {
+    func songDidChangedState(song: APSongItem, for controller: APController, animated: Bool) {
         checkState()
     }
     
-    func songDidStartPlaying(song:APSongItem, for controller:APController) {
+    func songDidStartPlaying(song:APSongItem, for controller:APController, animated: Bool) {
         
     }
-    func songDidStopPlaying(song:APSongItem, for controller:APController) {
+    func songDidStopPlaying(song:APSongItem, for controller:APController, animated: Bool) {
         
     }
-    func playerDidChangedTimebase(song:APSongItem, for controller:APController) {
+    func playerDidChangedTimebase(song:APSongItem, for controller:APController, animated: Bool) {
         
     }
     
-    func audioDidCompleteQueue(for controller:APController) {
+    func audioDidCompleteQueue(for controller:APController, animated: Bool) {
         
     }
     

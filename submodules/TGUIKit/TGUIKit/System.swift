@@ -8,7 +8,7 @@
 
 import Cocoa
 import SwiftSignalKit
-
+import AVFoundation
 public struct System {
 
     public static var scaleFactor: Atomic<CGFloat> = Atomic(value: 2.0)
@@ -21,6 +21,21 @@ public struct System {
     
     public static var backingScale:CGFloat {
         return CGFloat(scaleFactor.modify({$0}))
+    }
+    public static var aspectRatio: CGFloat {
+        let frame = NSScreen.main?.frame ?? .zero
+        let preferredAspectRatio = CGFloat(frame.width / frame.height)
+        return preferredAspectRatio
+    }
+    
+    public static var cameraAspectRatio: CGFloat {
+        let device = AVCaptureDevice.default(for: .video)
+        let description = device?.activeFormat.formatDescription
+        if let description = description {
+            let dimension = CMVideoFormatDescriptionGetDimensions(description)
+            return CGFloat(dimension.width) / CGFloat(dimension.height)
+        }
+        return aspectRatio
     }
     
     public static var drawAsync:Bool {
@@ -108,4 +123,17 @@ public func reverseIndexList(_ list:[Int], _ count:Int) -> [Int] {
         reversed.append(count - int1 - 1)
     }
     return reversed
+}
+
+
+public func delay(_ delay:Double, closure:@escaping ()->()) {
+    let when = DispatchTime.now() + delay
+    DispatchQueue.main.asyncAfter(deadline: when, execute: closure)
+}
+public func delay(_ delay:Double, onQueue queue: DispatchQueue, closure:@escaping ()->()) {
+    let when = DispatchTime.now() + delay
+    queue.asyncAfter(deadline: when, execute: closure)
+}
+public func delaySignal(_ value:Double) -> Signal<NoValue, NoError> {
+    return .complete() |> delay(value, queue: .mainQueue())
 }

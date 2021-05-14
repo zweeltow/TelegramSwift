@@ -241,7 +241,7 @@ public class SectionViewController: GenericViewController<SectionControllerView>
         super.viewDidAppear(animated)
         selectedSection.controller.viewDidAppear(animated)
         
-        window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             guard let `self` = self else {return .rejected}
             
             if !self.sections.isEmpty {
@@ -258,7 +258,7 @@ public class SectionViewController: GenericViewController<SectionControllerView>
         }, with: self, for: .Tab, priority: .high)
         
         
-        window?.add(swipe: { [weak self] direction -> SwipeHandlerResult in
+        window?.add(swipe: { [weak self] direction, _ -> SwipeHandlerResult in
             guard let `self` = self, !self.sections.isEmpty else {return .nothing}
 
             if !self.selectedSection.controller.supportSwipes {

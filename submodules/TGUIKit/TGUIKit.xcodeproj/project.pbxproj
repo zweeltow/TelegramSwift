@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		27CBE70825BACBAA00560AC6 /* VolumeMenuItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27CBE70725BACBAA00560AC6 /* VolumeMenuItemView.swift */; };
 		9F1C279521D391BF003CD033 /* HorizontalScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F1C279421D391BF003CD033 /* HorizontalScrollView.swift */; };
 		9F4EEF9A21DCD260002C3B33 /* SliderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F4EEF9921DCD260002C3B33 /* SliderView.swift */; };
 		9F6281292037389200B2D3C9 /* CheckBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F6281282037389200B2D3C9 /* CheckBox.swift */; };
@@ -105,15 +106,20 @@
 		C2E8694F1F44481400BDD0A2 /* GridItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2E8694E1F44481400BDD0A2 /* GridItem.swift */; };
 		C2E869511F4449A700BDD0A2 /* GridItemNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2E869501F4449A700BDD0A2 /* GridItemNode.swift */; };
 		C2FD33E71E6952A8008D13D4 /* RadialProgressContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2FD33E61E6952A8008D13D4 /* RadialProgressContainerView.swift */; };
+		D006030924D0256000206226 /* HorizontalSliderControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D006030824D0256000206226 /* HorizontalSliderControl.swift */; };
+		D00746C3257646C40000DF74 /* InfiniteProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00746C2257646C40000DF74 /* InfiniteProgressView.swift */; };
+		D00746C6257646D10000DF74 /* DynamicCounterTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00746C5257646D10000DF74 /* DynamicCounterTextView.swift */; };
 		D04D214C230ED78300609388 /* SPopoverRowItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04D214A230ED78300609388 /* SPopoverRowItem.swift */; };
 		D04D214D230ED78300609388 /* SPopoverViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04D214B230ED78300609388 /* SPopoverViewController.swift */; };
 		D050518E2342A75D00D93176 /* DisplayLinkAnimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D050518D2342A75D00D93176 /* DisplayLinkAnimator.swift */; };
 		D0558D8221528DF5006B403D /* ModalTouchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0558D8121528DF5006B403D /* ModalTouchBar.swift */; };
 		D05F392022FB37920040F341 /* DatePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05F391F22FB37920040F341 /* DatePicker.swift */; };
+		D06C6961253ECD2600DD9005 /* VerticalParticleListControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06C6960253ECD2600DD9005 /* VerticalParticleListControl.swift */; };
 		D0BEB9922163C1F00055B718 /* SelectionRectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0BEB9912163C1F00055B718 /* SelectionRectView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		27CBE70725BACBAA00560AC6 /* VolumeMenuItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VolumeMenuItemView.swift; sourceTree = "<group>"; };
 		9F1C279421D391BF003CD033 /* HorizontalScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalScrollView.swift; sourceTree = "<group>"; };
 		9F4EEF9921DCD260002C3B33 /* SliderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SliderView.swift; sourceTree = "<group>"; };
 		9F6281282037389200B2D3C9 /* CheckBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckBox.swift; sourceTree = "<group>"; };
@@ -219,11 +225,15 @@
 		C2E8694E1F44481400BDD0A2 /* GridItem.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GridItem.swift; sourceTree = "<group>"; };
 		C2E869501F4449A700BDD0A2 /* GridItemNode.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GridItemNode.swift; sourceTree = "<group>"; };
 		C2FD33E61E6952A8008D13D4 /* RadialProgressContainerView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RadialProgressContainerView.swift; sourceTree = "<group>"; };
+		D006030824D0256000206226 /* HorizontalSliderControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalSliderControl.swift; sourceTree = "<group>"; };
+		D00746C2257646C40000DF74 /* InfiniteProgressView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = InfiniteProgressView.swift; sourceTree = "<group>"; };
+		D00746C5257646D10000DF74 /* DynamicCounterTextView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DynamicCounterTextView.swift; sourceTree = "<group>"; };
 		D04D214A230ED78300609388 /* SPopoverRowItem.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SPopoverRowItem.swift; sourceTree = "<group>"; };
 		D04D214B230ED78300609388 /* SPopoverViewController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SPopoverViewController.swift; sourceTree = "<group>"; };
 		D050518D2342A75D00D93176 /* DisplayLinkAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLinkAnimator.swift; sourceTree = "<group>"; };
 		D0558D8121528DF5006B403D /* ModalTouchBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModalTouchBar.swift; sourceTree = "<group>"; };
 		D05F391F22FB37920040F341 /* DatePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatePicker.swift; sourceTree = "<group>"; };
+		D06C6960253ECD2600DD9005 /* VerticalParticleListControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerticalParticleListControl.swift; sourceTree = "<group>"; };
 		D0BEB9912163C1F00055B718 /* SelectionRectView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionRectView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -540,6 +550,11 @@
 				D0BEB9912163C1F00055B718 /* SelectionRectView.swift */,
 				9F4EEF9921DCD260002C3B33 /* SliderView.swift */,
 				A7D49477235F226C003E9A25 /* SpinningProgressView.swift */,
+				D006030824D0256000206226 /* HorizontalSliderControl.swift */,
+				D06C6960253ECD2600DD9005 /* VerticalParticleListControl.swift */,
+				D00746C2257646C40000DF74 /* InfiniteProgressView.swift */,
+				D00746C5257646D10000DF74 /* DynamicCounterTextView.swift */,
+				27CBE70725BACBAA00560AC6 /* VolumeMenuItemView.swift */,
 			);
 			name = view;
 			sourceTree = "<group>";
@@ -647,6 +662,7 @@
 				C219E1EF1D8AE3310042F0C8 /* AnimationStyle.swift in Sources */,
 				A7D49478235F226C003E9A25 /* SpinningProgressView.swift in Sources */,
 				C2271DA61DAD16B4001792B6 /* BadgeNode.swift in Sources */,
+				D06C6961253ECD2600DD9005 /* VerticalParticleListControl.swift in Sources */,
 				C234CA8F1D97DF26003023F7 /* Image.swift in Sources */,
 				C2B1A1181DA1673300ACB1DD /* TableAnimationInterface.swift in Sources */,
 				C2271F331DB4CEB30045E719 /* HorizontalTableView.swift in Sources */,
@@ -677,6 +693,7 @@
 				C291ED991DB35BC5008C6B2A /* Window.swift in Sources */,
 				C296AF841D8D9D7D001DBB59 /* RadialProgressView.swift in Sources */,
 				C24A371A1F338406004ADE5C /* SectionViewController.swift in Sources */,
+				D006030924D0256000206226 /* HorizontalSliderControl.swift in Sources */,
 				C219E1EB1D8AD1470042F0C8 /* NavigationViewController.swift in Sources */,
 				C253A9761D9430A900CDC850 /* ImageView.swift in Sources */,
 				C24A37161F324A36004ADE5C /* ShadowView.swift in Sources */,
@@ -690,6 +707,7 @@
 				C2303E841D9A69BD00098E12 /* TabBarView.swift in Sources */,
 				C22E063B1D8067A000A11C88 /* TableRowView.swift in Sources */,
 				C2303E7A1D9987FE00098E12 /* Popover.swift in Sources */,
+				D00746C3257646C40000DF74 /* InfiniteProgressView.swift in Sources */,
 				9F9B5EAF2255FEDA00728CDC /* TooltipController.swift in Sources */,
 				C29B5F3C1DC66DAC00D13E65 /* DraggingView.swift in Sources */,
 				9F6281292037389200B2D3C9 /* CheckBox.swift in Sources */,
@@ -721,6 +739,7 @@
 				A7C41DB92359E69400CF9402 /* CatalinaStyledSegmentController.swift in Sources */,
 				D04D214D230ED78300609388 /* SPopoverViewController.swift in Sources */,
 				C22E06391D804DCD00A11C88 /* ScrollView.swift in Sources */,
+				27CBE70825BACBAA00560AC6 /* VolumeMenuItemView.swift in Sources */,
 				C219E1F11D8AFD140042F0C8 /* AnimationBlockDelegate.swift in Sources */,
 				C253A9521D9147A400CDC850 /* Layer.swift in Sources */,
 				C22E06371D804D3B00A11C88 /* TableRowItem.swift in Sources */,
@@ -733,6 +752,7 @@
 				C2303E761D996E6300098E12 /* ImageButton.swift in Sources */,
 				C226741B1DBCD6E8000BA9ED /* GridNode.swift in Sources */,
 				C2CBCABD1D814D4B00142EC0 /* System.swift in Sources */,
+				D00746C6257646D10000DF74 /* DynamicCounterTextView.swift in Sources */,
 				C2303E7F1D99BEAE00098E12 /* OverlayControl.swift in Sources */,
 				C29B5F471DC8CA2B00D13E65 /* NavigationModalView.swift in Sources */,
 				C26505901E02EBEE001954DC /* MagnifyView.swift in Sources */,
@@ -793,7 +813,8 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
-				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
+				SWIFT_COMPILATION_MODE = singlefile;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";
 			};
@@ -802,6 +823,7 @@
 		A7F282EC238EAB8000742C20 /* Github */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -818,6 +840,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
 				MACH_O_TYPE = mh_dylib;
 				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = org.telegram.TGUIKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -882,6 +905,7 @@
 		C22069D31E8EB4D700E82730 /* ReleaseHockeyapp */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -898,6 +922,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
 				MACH_O_TYPE = mh_dylib;
 				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = org.telegram.TGUIKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -960,6 +985,7 @@
 		C232EA3A1E1BCFDE00C4D38C /* ReleaseAppStore */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -976,6 +1002,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
 				MACH_O_TYPE = mh_dylib;
 				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = org.telegram.TGUIKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1037,7 +1064,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";
 			};
@@ -1090,7 +1117,8 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
-				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
+				SWIFT_COMPILATION_MODE = singlefile;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";
 			};
@@ -1099,6 +1127,7 @@
 		C2E0DEB01D7EF51C00EF1C8D /* DebugHockeyapp */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -1116,6 +1145,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
 				MACH_O_TYPE = mh_dylib;
 				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = org.telegram.TGUIKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1128,6 +1158,7 @@
 		C2E0DEB11D7EF51C00EF1C8D /* DebugAppStore */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -1144,6 +1175,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
 				MACH_O_TYPE = mh_dylib;
 				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = org.telegram.TGUIKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -1207,7 +1239,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
 				VERSIONING_SYSTEM = "apple-generic";
 				VERSION_INFO_PREFIX = "";
 			};
@@ -1216,6 +1248,7 @@
 		D01E1ED922B260DD00AD6DAE /* HockeyappMacAlpha */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD)";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
@@ -1233,6 +1266,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/Frameworks";
 				MACH_O_TYPE = mh_dylib;
 				MACOSX_DEPLOYMENT_TARGET = 10.11;
+				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = org.telegram.TGUIKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

@@ -44,13 +44,24 @@ class MGalleryPeerPhotoItem: MGalleryItem {
     }
     
     override func request(immediately: Bool) {
-        
+        super.request(immediately: immediately)
         
         let context = self.context
         let media = self.media
         let entry = self.entry
         
-        let result = combineLatest(size.get(), rotate.get()) |> mapToSignal { [weak self] size, orientation -> Signal<(NSSize, ImageOrientation?), NoError> in
+        let magnify = self.magnify.get()
+        
+        let sizeValue: Signal<NSSize, NoError> = size.get() |> mapToSignal { size in
+            return magnify |> take(1) |> map { magnify in
+                return NSMakeSize(floorToScreenPixels(System.backingScale, size.width / magnify), floorToScreenPixels(System.backingScale, size.height / magnify))
+            }
+        } |> distinctUntilChanged(isEqual: { lhs, rhs -> Bool in
+            return lhs == rhs
+        })
+        
+        
+        let result = combineLatest(sizeValue, rotate.get()) |> mapToSignal { [weak self] size, orientation -> Signal<(NSSize, ImageOrientation?), NoError> in
             guard let `self` = self else {return .complete()}
             var newSize = self.smallestValue(for: size)
             if let orientation = orientation {
@@ -87,7 +98,7 @@ class MGalleryPeerPhotoItem: MGalleryItem {
             })
         } 
         
-        self.image.set(result |> map { .image($0.0, $0.1) } |> deliverOnMainQueue)
+        self.image.set(result |> map { GPreviewValueClass(.image($0.0, $0.1)) } |> deliverOnMainQueue)
         
         
         fetch()

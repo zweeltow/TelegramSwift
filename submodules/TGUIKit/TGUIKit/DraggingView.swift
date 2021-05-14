@@ -96,6 +96,14 @@ public class DraggingView: SplitView {
         self.registerForDraggedTypes([.string, .tiff, .kUrl, .kFilenames])
     }
     
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+    }
+    
+    deinit {
+        self.unregisterDraggedTypes()
+    }
+    
     override public func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         
         for itemView in container.subviews as! [DragView] {
@@ -183,6 +191,16 @@ public class DraggingView: SplitView {
     
     public override func draggingEnded(_ sender: NSDraggingInfo?) {
         draggingExited(sender)
+    }
+    
+    public var _hitTest:((NSPoint)->NSView?)?
+    
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        if isEventLess {
+            return _hitTest?(point)
+        } else {
+            return super.hitTest(point)
+        }
     }
     
     

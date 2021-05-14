@@ -315,7 +315,7 @@ class ShareObject {
         return false
     }
     
-    func perform(to entries:[PeerId], comment: String? = nil) -> Signal<Never, String> {
+    func perform(to entries:[PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
         return .complete()
     }
     func limitReached() {
@@ -331,7 +331,7 @@ class ShareObject {
     }
     
     func possibilityPerformTo(_ peer:Peer) -> Bool {
-        return peer.canSendMessage && !self.excludePeerIds.contains(peer.id)
+        return peer.canSendMessage(false) && !self.excludePeerIds.contains(peer.id)
     }
     
     
@@ -340,7 +340,7 @@ class ShareObject {
 class ShareLinkObject : ShareObject {
     let link:String
     init(_ context: AccountContext, link:String) {
-        self.link = link
+        self.link = link.removingPercentEncoding ?? link
         super.init(context)
     }
     
@@ -352,18 +352,50 @@ class ShareLinkObject : ShareObject {
         copyToClipboard(link)
     }
     
-    override func perform(to peerIds:[PeerId], comment: String? = nil) -> Signal<Never, String> {
+    override func perform(to peerIds:[PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
         for peerId in peerIds {
-            
-            if let comment = comment?.trimmed, !comment.isEmpty {
-                _ = Sender.enqueue(message: EnqueueMessage.message(text: comment, attributes: [], mediaReference: nil, replyToMessageId: nil, localGroupingKey: nil), context: context, peerId: peerId).start()
+            var link = self.link
+            if let comment = comment, !comment.inputText.isEmpty {
+                link += "\n\(comment.inputText)"
             }
             
             var attributes:[MessageAttribute] = []
             if FastSettings.isChannelMessagesMuted(peerId) {
                 attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
             }
-            _ = enqueueMessages(context: context, peerId: peerId, messages: [EnqueueMessage.message(text: link, attributes: attributes, mediaReference: nil, replyToMessageId: nil, localGroupingKey: nil)]).start()
+            _ = enqueueMessages(account: context.account, peerId: peerId, messages: [EnqueueMessage.message(text: link, attributes: attributes, mediaReference: nil, replyToMessageId: nil, localGroupingKey: nil, correlationId: nil)]).start()
+        }
+        return .complete()
+    }
+}
+
+
+class ShareUrlObject : ShareObject {
+    let url:String
+    init(_ context: AccountContext, url:String) {
+        self.url = url
+        super.init(context)
+    }
+    
+    override var hasLink: Bool {
+        return true
+    }
+    
+    override func shareLink() {
+        copyToClipboard(url)
+    }
+    
+    override func perform(to peerIds:[PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
+        for peerId in peerIds {
+            
+            var attributes:[MessageAttribute] = []
+            if FastSettings.isChannelMessagesMuted(peerId) {
+                attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
+            }
+            
+            let media = TelegramMediaFile(fileId: MediaId.init(namespace: 0, id: 0), partialReference: nil, resource: LocalFileReferenceMediaResource.init(localFilePath: url, randomId: arc4random64()), previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "text/plain", size: nil, attributes: [.FileName(fileName: url.nsstring.lastPathComponent)])
+                        
+            _ = enqueueMessages(account: context.account, peerId: peerId, messages: [EnqueueMessage.message(text: "", attributes: attributes, mediaReference: AnyMediaReference.standalone(media: media), replyToMessageId: nil, localGroupingKey: nil, correlationId: nil)]).start()
         }
         return .complete()
     }
@@ -376,8 +408,15 @@ class ShareContactObject : ShareObject {
         super.init(context)
     }
     
-    override func perform(to peerIds:[PeerId], comment: String? = nil) -> Signal<Never, String> {
+    override func perform(to peerIds:[PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
         for peerId in peerIds {
+            if let comment = comment, !comment.inputText.isEmpty {
+                var attributes:[MessageAttribute] = []
+                if FastSettings.isChannelMessagesMuted(peerId) {
+                    attributes.append(NotificationInfoMessageAttribute(flags: [.muted]))
+                }
+                _ = enqueueMessages(account: context.account, peerId: peerId, messages: [EnqueueMessage.message(text: comment.inputText, attributes: attributes, mediaReference: nil, replyToMessageId: nil, localGroupingKey: nil, correlationId: nil)]).start()
+            }
             _ = Sender.shareContact(context: context, peerId: peerId, contact: user).start()
         }
         return .complete()
@@ -392,7 +431,7 @@ class ShareCallbackObject : ShareObject {
         super.init(context)
     }
     
-    override func perform(to peerIds:[PeerId], comment: String? = nil) -> Signal<Never, String> {
+    override func perform(to peerIds:[PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
         return callback(peerIds) |> mapError { _ in return String() }
     }
     
@@ -410,16 +449,18 @@ class ShareMessageObject : ShareObject {
     init(_ context: AccountContext, _ message:Message, _ groupMessages:[Message] = []) {
         self.messageIds = groupMessages.isEmpty ? [message.id] : groupMessages.map{$0.id}
         self.message = message
-        let peer = messageMainPeer(message) as? TelegramChannel
-//        if let author = message.forwardInfo?.author as? TelegramChannel {
-//            peer = author
-//        } else {
-//            peer = messageMainPeer(message) as? TelegramChannel
-//        }
+        var peer = messageMainPeer(message) as? TelegramChannel
+        var messageId = message.id
+        if let author = message.forwardInfo?.author as? TelegramChannel {
+            peer = author
+            messageId = message.forwardInfo?.sourceMessageId ?? message.id
+        }
+        //            peer = messageMainPeer(message) as? TelegramChannel
+        //        }
         if let peer = peer, let address = peer.username {
             switch peer.info {
             case .broadcast:
-                self.link = "https://t.me/" + address + "/" + "\(message.id.id)"
+                self.link = "https://t.me/" + address + "/" + "\(messageId.id)"
             default:
                 self.link = nil
             }
@@ -449,11 +490,19 @@ class ShareMessageObject : ShareObject {
         exportLinkDisposable.dispose()
     }
 
-    override func perform(to peerIds:[PeerId], comment: String? = nil) -> Signal<Never, String> {
+    override func perform(to peerIds:[PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
         for peerId in peerIds {
-            if let comment = comment?.trimmed, !comment.isEmpty {
-                _ = Sender.enqueue(message: EnqueueMessage.message(text: comment, attributes: [], mediaReference: nil, replyToMessageId: nil, localGroupingKey: nil), context: context, peerId: peerId).start()
+            if let comment = comment, !comment.inputText.isEmpty {
+                let parsingUrlType: ParsingType
+                if peerId.namespace != Namespaces.Peer.SecretChat {
+                    parsingUrlType = [.Hashtags]
+                } else {
+                    parsingUrlType = [.Links, .Hashtags]
+                }
+                let attributes:[MessageAttribute] = [TextEntitiesMessageAttribute(entities: comment.messageTextEntities(parsingUrlType))]
+                _ = Sender.enqueue(message: EnqueueMessage.message(text: comment.inputText, attributes: attributes, mediaReference: nil, replyToMessageId: nil, localGroupingKey: nil, correlationId: nil), context: context, peerId: peerId).start()
             }
+            
             _ = Sender.forwardMessages(messageIds: messageIds, context: context, peerId: peerId).start()
         }
         return .complete()
@@ -480,10 +529,9 @@ final class ForwardMessagesObject : ShareObject {
         return false
     }
     
-    override func perform(to peerIds: [PeerId], comment: String?) -> Signal<Never, String> {
-        let comment = comment != nil && !comment!.isEmpty ? comment : nil
+    override func perform(to peerIds: [PeerId], comment: ChatTextInputState? = nil) -> Signal<Never, String> {
         let context = self.context
-        
+        let comment = comment != nil ? comment!.inputText.isEmpty ? nil : comment : nil
         let peers = context.account.postbox.transaction { transaction -> Peer? in
             for peerId in peerIds {
                 if let peer = transaction.getPeer(peerId) {
@@ -511,6 +559,16 @@ final class ForwardMessagesObject : ShareObject {
                 let navigation = self.context.sharedContext.bindings.rootNavigation()
                 if let peerId = peerIds.first {
                     if peerId == context.peerId {
+                        if let comment = comment, !comment.inputText.isEmpty {
+                            let parsingUrlType: ParsingType
+                            if peerId.namespace != Namespaces.Peer.SecretChat {
+                                parsingUrlType = [.Hashtags]
+                            } else {
+                                parsingUrlType = [.Links, .Hashtags]
+                            }
+                            let attributes:[MessageAttribute] = [TextEntitiesMessageAttribute(entities: comment.messageTextEntities(parsingUrlType))]
+                            _ = Sender.enqueue(message: EnqueueMessage.message(text: comment.inputText, attributes: attributes, mediaReference: nil, replyToMessageId: nil, localGroupingKey: nil, correlationId: nil), context: context, peerId: peerId).start()
+                        }
                         _ = Sender.forwardMessages(messageIds: messageIds, context: context, peerId: context.account.peerId).start()
                         if let controller = context.sharedContext.bindings.rootNavigation().controller as? ChatController {
                             controller.chatInteraction.update({$0.withoutSelectionState()})
@@ -520,7 +578,7 @@ final class ForwardMessagesObject : ShareObject {
                         })
                     } else {
                         if let controller = navigation.controller as? ChatController, controller.chatInteraction.peerId == peerId {
-                            controller.chatInteraction.update({$0.withoutSelectionState().updatedInterfaceState({$0.withUpdatedForwardMessageIds(messageIds)})})
+                            controller.chatInteraction.update({$0.withoutSelectionState().updatedInterfaceState({$0.withUpdatedForwardMessageIds(messageIds).withUpdatedInputState(comment ?? $0.inputState)})})
                         } else {
                             (navigation.controller as? ChatController)?.chatInteraction.update({ $0.withoutSelectionState() })
                             
@@ -650,7 +708,7 @@ fileprivate func prepareEntries(from:[SelectablePeersEntry]?, to:[SelectablePeer
                selectInteraction.action(peer.id)
             })
         case let .secretChat(peer, peerId, _, _, drawSeparator):
-            return  ShortPeerRowItem(initialSize, peer: peer, account :account, stableId: entry.stableId, height: 48, photoSize:NSMakeSize(36, 36), titleStyle: ControlStyle(font: .medium(.title), foregroundColor: theme.colors.accent, highlightColor: .white), statusStyle: ControlStyle(font: .normal(.text), foregroundColor: theme.colors.grayText, highlightColor:.white), status: L10n.composeSelectSecretChat.lowercased(), drawCustomSeparator: drawSeparator, isLookSavedMessage : peer.id == account.peerId, inset:NSEdgeInsets(left: 10, right: 10), drawSeparatorIgnoringInset: true, interactionType: multipleSelection ? .selectable(selectInteraction) : .plain, action: {
+            return  ShortPeerRowItem(initialSize, peer: peer, account :account, peerId: peerId, stableId: entry.stableId, height: 48, photoSize:NSMakeSize(36, 36), titleStyle: ControlStyle(font: .medium(.title), foregroundColor: theme.colors.accent, highlightColor: .white), statusStyle: ControlStyle(font: .normal(.text), foregroundColor: theme.colors.grayText, highlightColor:.white), status: L10n.composeSelectSecretChat.lowercased(), drawCustomSeparator: drawSeparator, isLookSavedMessage : peer.id == account.peerId, inset:NSEdgeInsets(left: 10, right: 10), drawSeparatorIgnoringInset: true, interactionType: multipleSelection ? .selectable(selectInteraction) : .plain, action: {
                 selectInteraction.action(peerId)
             })
         case let .separator(text, _):
@@ -680,6 +738,11 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
     private let exportLinkDisposable:MetaDisposable = MetaDisposable()
     private let tokenDisposable: MetaDisposable = MetaDisposable()
     
+    private var contextQueryState: (ChatPresentationInputQuery?, Disposable)?
+    private let inputContextHelper: InputContextHelper
+    private let contextChatInteraction: ChatInteraction
+
+    
     func notify(with value: Any, oldValue: Any, animated: Bool) {
         if let value = value as? SelectPeerPresentation, let oldValue = oldValue as? SelectPeerPresentation {
             
@@ -688,7 +751,7 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
 
             
             let selected = value.selected.filter {
-                $0.namespace != ChatListFilterPeerCategories.Namespace
+                $0.namespace._internalGetInt32Value() != ChatListFilterPeerCategories.Namespace
             }
             
             if let limit = self.share.limit, selected.count > limit {
@@ -719,7 +782,88 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
             genericView.tokenizedView.removeTokens(uniqueIds: idsToRemove, animated: animated)
             self.modal?.interactions?.updateEnables(!value.selected.isEmpty || share.alwaysEnableDone)
             
+            if value.inputQueryResult != oldValue.inputQueryResult {
+                inputContextHelper.context(with: value.inputQueryResult, for: self.genericView, relativeView: self.genericView.textContainerView, position: .above, selectIndex: nil, animated: animated)
+            }
+            if let (possibleQueryRange, possibleTypes, _) = textInputStateContextQueryRangeAndType(ChatTextInputState(inputText: value.comment.string, selectionRange: value.comment.range.min ..< value.comment.range.max, attributes: []), includeContext: false) {
+                if possibleTypes.contains(.mention) {
+                    let peers: [Peer] = value.peers.compactMap { (_, value) in
+                        if value.isGroup || value.isSupergroup {
+                            return value
+                        } else {
+                            return nil
+                        }
+                    }
+                    let query = String(value.comment.string[possibleQueryRange])
+                    if let (updatedContextQueryState, updatedContextQuerySignal) = chatContextQueryForSearchMention(chatLocations: peers.map { .peer($0.id) }, .mention(query: query, includeRecent: false), currentQuery: self.contextQueryState?.0, context: share.context) {
+                        self.contextQueryState?.1.dispose()
+                        var inScope = true
+                        var inScopeResult: ((ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?)?
+                        self.contextQueryState = (updatedContextQueryState, (updatedContextQuerySignal |> deliverOnMainQueue).start(next: { [weak self] result in
+                            if let strongSelf = self {
+                                if Thread.isMainThread && inScope {
+                                    inScope = false
+                                    inScopeResult = result
+                                } else {
+                                    strongSelf.selectInteractions.update(animated: animated, {
+                                        $0.updatedInputQueryResult { previousResult in
+                                            return result(previousResult)
+                                        }
+                                    })
+                                    
+                                }
+                            }
+                        }))
+                        inScope = false
+                        if let inScopeResult = inScopeResult {
+                            selectInteractions.update(animated: animated, {
+                                $0.updatedInputQueryResult { previousResult in
+                                    return inScopeResult(previousResult)
+                                }
+                            })
+                        }
+                    } else {
+                        selectInteractions.update(animated: animated, {
+                            $0.updatedInputQueryResult { _ in
+                                return nil
+                            }
+                        })
+                    }
+                } else {
+                    selectInteractions.update(animated: animated, {
+                        $0.updatedInputQueryResult { _ in
+                            return nil
+                        }
+                    })
+                }
+            } else {
+                selectInteractions.update(animated: animated, {
+                    $0.updatedInputQueryResult { _ in
+                        return nil
+                    }
+                })
+            }
+        } else if let value = value as? ChatPresentationInterfaceState, let oldValue = oldValue as? ChatPresentationInterfaceState {
+            if value.effectiveInput != oldValue.effectiveInput {
+                updateInput(value, prevState: oldValue, animated)
+            }
         }
+    }
+    
+    private func updateInput(_ state:ChatPresentationInterfaceState, prevState: ChatPresentationInterfaceState, _ animated:Bool = true) -> Void {
+        
+        let textView = genericView.textView
+        
+        if textView.string() != state.effectiveInput.inputText || state.effectiveInput.attributes != prevState.effectiveInput.attributes  {
+            textView.animates = false
+            textView.setAttributedString(state.effectiveInput.attributedString, animated:animated)
+            textView.animates = true
+        }
+        let range = NSMakeRange(state.effectiveInput.selectionRange.lowerBound, state.effectiveInput.selectionRange.upperBound - state.effectiveInput.selectionRange.lowerBound)
+        if textView.selectedRange().location != range.location || textView.selectedRange().length != range.length {
+            textView.setSelectedRange(range)
+        }
+        textViewTextDidChangeSelectedRange(range)
     }
     
     func isEqual(to other: Notifable) -> Bool {
@@ -777,17 +921,17 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
         
         let context = self.share.context
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.genericView.tableView.highlightPrev()
             return .invoked
         }, with: self, for: .UpArrow, priority: .modal)
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.genericView.tableView.highlightNext()
             return .invoked
         }, with: self, for: .DownArrow, priority: .modal)
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             guard let `self` = self else {return .rejected}
             if let highlighted = self.genericView.tableView.highlightedItem() as? ShortPeerRowItem  {
                 _ = self.genericView.tableView.select(item: highlighted)
@@ -798,60 +942,100 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
         }, with: self, for: .Return, priority: .low)
         
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.selectInteractions.action(context.peerId)
             return .invoked
         }, with: self, for: .Zero, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(0)
             return .invoked
         }, with: self, for: .One, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(1)
             return .invoked
         }, with: self, for: .Two, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(2)
             return .invoked
         }, with: self, for: .Three, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(3)
             return .invoked
         }, with: self, for: .Four, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(4)
             return .invoked
         }, with: self, for: .Five, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(5)
             return .invoked
         }, with: self, for: .Six, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(6)
             return .invoked
         }, with: self, for: .Seven, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(7)
             return .invoked
         }, with: self, for: .Eight, priority: self.responderPriority, modifierFlags: [.command])
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.invokeShortCut(8)
             return .invoked
         }, with: self, for: .Nine, priority: self.responderPriority, modifierFlags: [.command])
+        
+        
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.genericView.textView.boldWord()
+            return .invoked
+        }, with: self, for: .B, priority: self.responderPriority, modifierFlags: [.command])
+        
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.makeUrl()
+            return .invoked
+        }, with: self, for: .U, priority: self.responderPriority, modifierFlags: [.command])
+        
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.genericView.textView.italicWord()
+            return .invoked
+        }, with: self, for: .I, priority: self.responderPriority, modifierFlags: [.command])
+        
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
+            self?.genericView.textView.codeWord()
+            return .invoked
+        }, with: self, for: .K, priority: self.responderPriority, modifierFlags: [.command, .shift])
+    }
+    
+    
+    private func makeUrl() {
+        let range = self.genericView.textView.selectedRange()
+        guard range.min != range.max, let window = window else {
+            return
+        }
+        var effectiveRange:NSRange = NSMakeRange(NSNotFound, 0)
+        let defaultTag: TGInputTextTag? = genericView.textView.attributedString().attribute(NSAttributedString.Key(rawValue: TGCustomLinkAttributeName), at: range.location, effectiveRange: &effectiveRange) as? TGInputTextTag
+        let defaultUrl = defaultTag?.attachment as? String
+        if effectiveRange.location == NSNotFound || defaultTag == nil {
+            effectiveRange = range
+        }
+        showModal(with: InputURLFormatterModalController(string: genericView.textView.string().nsstring.substring(with: effectiveRange), defaultUrl: defaultUrl, completion: { [weak self] url in
+            self?.genericView.textView.addLink(url, range: effectiveRange)
+        }), for: window)
+        
     }
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         self.window?.removeAllHandlers(for: self)
+        self.contextChatInteraction.remove(observer: self)
     }
     
     override var handleAllEvents: Bool {
@@ -864,6 +1048,9 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        self.contextChatInteraction.add(observer: self)
+
         
         genericView.tableView.delegate = self
         
@@ -908,7 +1095,7 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
         
         selectInteraction.action = { [weak self] peerId in
             guard let `self` = self else { return }
-            _ = share.perform(to: [peerId], comment: self.genericView.textView.string()).start(error: { error in
+            _ = share.perform(to: [peerId], comment: self.contextChatInteraction.presentation.interfaceState.inputState).start(error: { error in
                alert(for: context.window, info: error)
             }, completed: { [weak self] in
                 self?.close()
@@ -1042,9 +1229,9 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
                     
                     switch(location) {
                     case let .Initial(count, _):
-                        signal = context.account.viewTracker.tailChatListView(groupId: .root, filterPredicate: nil, count: count)
+                        signal = context.account.viewTracker.tailChatListView(groupId: .root, filterPredicate: nil, count: count) |> take(1)
                     case let .Index(index, _):
-                        signal = context.account.viewTracker.aroundChatListView(groupId: .root, filterPredicate: nil, index: index, count: 30)
+                        signal = context.account.viewTracker.aroundChatListView(groupId: .root, filterPredicate: nil, index: index, count: 30) |> take(1)
                     }
                     
                     return signal |> deliverOnPrepareQueue |> mapToSignal { value -> Signal<(ChatListView,ViewUpdateType, [PeerId: PeerStatusStringResult], Peer), NoError> in
@@ -1284,7 +1471,7 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
     
     private func invoke() -> KeyHandlerResult {
         if !genericView.tokenizedView.query.isEmpty {
-            if genericView.tableView.count == 1, let item = genericView.tableView.item(at: 0) as? ShortPeerRowItem {
+            if !genericView.tableView.isEmpty, let item = genericView.tableView.item(at: 0) as? ShortPeerRowItem {
                 selectInteractions.update({$0.withToggledSelected(item.peer.id, peer: item.peer)})
             }
             return .invoked
@@ -1333,7 +1520,7 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
                 for (peer, cachedData) in peerAndData {
                     inner: switch peer.info {
                     case let .group(info):
-                        if info.flags.contains(.slowModeEnabled) && (peer.adminRights != nil || !peer.flags.contains(.isCreator)) {
+                        if info.flags.contains(.slowModeEnabled) && (peer.adminRights == nil && !peer.flags.contains(.isCreator)) {
                             if let cachedData = cachedData, let validUntil = cachedData.slowModeValidUntilTimestamp {
                                 if validUntil > share.context.timestamp {
                                     failed.append(ShareFailedReason(peerId: peer.id, reason: slowModeTooltipText(validUntil - share.context.timestamp), target: .token))
@@ -1353,7 +1540,7 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
                 }
                 if failed.isEmpty {
                     self.genericView.tokenizedView.removeAllFailed(animated: true)
-                    _ = share.perform(to: Array(ids), comment: comment).start()
+                    _ = share.perform(to: Array(ids), comment: self.contextChatInteraction.presentation.interfaceState.inputState).start()
                     self.emoji.popover?.hide()
                     self.close()
                 } else {
@@ -1407,8 +1594,43 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
     
     init(_ share:ShareObject) {
         self.share = share
-        emoji = EmojiViewController(share.context, search: .single(SearchState(state: .None, request: nil)))
+        emoji = EmojiViewController(share.context)
+        self.contextChatInteraction = ChatInteraction(chatLocation: .peer(PeerId(0)), context: share.context)
+        inputContextHelper = InputContextHelper(chatInteraction: contextChatInteraction)
         super.init(frame: NSMakeRect(0, 0, 360, 400))
+        bar = .init(height: 0)
+        
+        
+        contextChatInteraction.movePeerToInput = { [weak self] peer in
+            if let strongSelf = self {
+                let string = strongSelf.genericView.textView.string()
+                let range = strongSelf.genericView.textView.selectedRange()
+                let textInputState = ChatTextInputState(inputText: string, selectionRange: range.min ..< range.max, attributes: chatTextAttributes(from: strongSelf.genericView.textView.attributedString()))
+                strongSelf.contextChatInteraction.update({$0.withUpdatedEffectiveInputState(textInputState)})
+                if let (range, _, _) = textInputStateContextQueryRangeAndType(textInputState, includeContext: false) {
+                    let inputText = textInputState.inputText
+                    
+                    let name:String = peer.addressName ?? peer.compactDisplayTitle
+                    
+                    let distance = inputText.distance(from: range.lowerBound, to: range.upperBound)
+                    let replacementText = name + " "
+                    
+                    let atLength = peer.addressName != nil ? 0 : 1
+                    
+                    let range = strongSelf.contextChatInteraction.appendText(replacementText, selectedRange: textInputState.selectionRange.lowerBound - distance - atLength ..< textInputState.selectionRange.upperBound)
+                    
+                    if peer.addressName == nil {
+                        let state = strongSelf.contextChatInteraction.presentation.effectiveInput
+                        var attributes = state.attributes
+                        attributes.append(.uid(range.lowerBound ..< range.upperBound - 1, peer.id.id._internalGetInt32Value()))
+                        let updatedState = ChatTextInputState(inputText: state.inputText, selectionRange: state.selectionRange, attributes: attributes)
+                        strongSelf.contextChatInteraction.update({$0.withUpdatedEffectiveInputState(updatedState)})
+                    }
+                }
+            }
+        }
+        
+        
         bar = .init(height: 0)
     }
 
@@ -1433,11 +1655,24 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
     }
     
     func textViewTextDidChange(_ string: String) {
-        
+        let range = self.genericView.textView.selectedRange()
+        self.selectInteractions.update {
+            $0.withUpdatedComment(.init(string: string, range: range))
+        }
+        let attributed = genericView.textView.attributedString()
+        let state = ChatTextInputState(inputText: attributed.string, selectionRange: range.location ..< range.location + range.length, attributes: chatTextAttributes(from: attributed))
+        contextChatInteraction.update({$0.withUpdatedEffectiveInputState(state)})
+
     }
     
     func textViewTextDidChangeSelectedRange(_ range: NSRange) {
-        
+        let string = self.genericView.textView.string()
+        self.selectInteractions.update {
+            $0.withUpdatedComment(.init(string: string, range: range))
+        }
+        let attributed = genericView.textView.attributedString()
+        let state = ChatTextInputState(inputText: attributed.string, selectionRange: range.location ..< range.location + range.length, attributes: chatTextAttributes(from: attributed))
+        contextChatInteraction.update({$0.withUpdatedEffectiveInputState(state)})
     }
     
     func textViewDidReachedLimit(_ textView: Any) {
@@ -1453,6 +1688,10 @@ class ShareModalController: ModalViewController, Notifable, TGModernGrowingDeleg
     }
     
     func textViewIsTypingEnabled() -> Bool {
+        return true
+    }
+    
+    func canTransformInputText() -> Bool {
         return true
     }
     

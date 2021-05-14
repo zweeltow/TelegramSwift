@@ -22,6 +22,7 @@ public extension ContainedViewLayoutTransitionCurve {
             return CAMediaTimingFunctionName.spring
         }
     }
+    
 }
 
 public enum ContainedViewLayoutTransition {
@@ -30,7 +31,7 @@ public enum ContainedViewLayoutTransition {
 }
 
 public extension ContainedViewLayoutTransition {
-    func updateFrame(view: View, frame: CGRect, completion: ((Bool) -> Void)? = nil) {
+    func updateFrame(view: NSView, frame: CGRect, completion: ((Bool) -> Void)? = nil) {
         switch self {
         case .immediate:
             view.frame = frame
@@ -39,14 +40,60 @@ public extension ContainedViewLayoutTransition {
             }
         case let .animated(duration, curve):
             let previousFrame = view.frame
-            view.frame = frame
-            view.layer?.animateFrame(from: previousFrame, to: frame, duration: duration, timingFunction: curve.timingFunction, completion: { result in
+            
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = duration
+                ctx.timingFunction = .init(name: curve.timingFunction)
+                view.animator().frame = frame
+            }, completionHandler: {
+                completion?(true)
+            })
+            view.animator().frame = frame
+            
+//
+//
+//            view.layer?.animateFrame(from: previousFrame, to: frame, duration: duration, timingFunction: curve.timingFunction, completion: { result in
+//                if let completion = completion {
+//                    completion(result)
+//                }
+//            })
+        }
+    }
+    
+    
+       func updateTransformScale(layer: CALayer, scale: CGFloat, beginWithCurrentState: Bool = false, completion: ((Bool) -> Void)? = nil) {
+           let t = layer.transform
+           let currentScale = sqrt((t.m11 * t.m11) + (t.m12 * t.m12) + (t.m13 * t.m13))
+           if currentScale.isEqual(to: scale) {
+               if let completion = completion {
+                   completion(true)
+               }
+               return
+           }
+           
+           switch self {
+           case .immediate:
+               layer.transform = CATransform3DMakeScale(scale, scale, 1.0)
+               if let completion = completion {
+                   completion(true)
+               }
+           case let .animated(duration, curve):
+               let previousScale: CGFloat
+               if beginWithCurrentState, let presentation = layer.presentation() {
+                   let t = presentation.transform
+                   previousScale = sqrt((t.m11 * t.m11) + (t.m12 * t.m12) + (t.m13 * t.m13))
+               } else {
+                   previousScale = currentScale
+               }
+            layer.animateScaleSpring(from: previousScale, to: scale, duration: duration, bounce: false, completion: { result in
                 if let completion = completion {
                     completion(result)
                 }
             })
-        }
-    }
+           }
+       }
+
+
     
 
     func updateAlpha(view: View, alpha: CGFloat, completion: ((Bool) -> Void)? = nil) {

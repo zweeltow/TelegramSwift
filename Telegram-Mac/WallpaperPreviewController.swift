@@ -289,7 +289,12 @@ private final class WallpaperAdditionColorView : View, TGModernGrowingDelegate {
     }
     
     func textViewDidPaste(_ pasteboard: NSPasteboard) -> Bool {
-        return false
+        
+        let text = pasteboard.string(forType: .string)
+        if let text = text, let color = NSColor(hexString: text) {
+            defaultColor = color
+        }
+        return true
     }
     
     func textViewSize(_ textView: TGModernGrowingTextView!) -> NSSize {
@@ -787,7 +792,7 @@ private final class WallpaperPreviewView: View {
             }
             self.tableView.enumerateVisibleViews(with: { view in
                 if let view = view as? ChatRowView {
-                    view.updateBackground(animated: false)
+                    view.updateBackground(animated: false, item: view.item)
                 }
             })
         }))
@@ -841,11 +846,11 @@ private final class WallpaperPreviewView: View {
             secondText = L10n.chatWPColorSecondMessage
         }
 
-        let firstMessage = Message(stableId: 0, stableVersion: 0, id: MessageId(peerId: fromUser1.id, namespace: 0, id: 0), globallyUniqueId: 0, groupingKey: 0, groupInfo: nil, timestamp: 60 * 20 + 60*60*18, flags: [.Incoming], tags: [], globalTags: [], localTags: [], forwardInfo: nil, author: fromUser2, text: firstText, attributes: [], media: [], peers:SimpleDictionary([fromUser2.id : fromUser2, fromUser1.id : fromUser1]) , associatedMessages: SimpleDictionary(), associatedMessageIds: [])
+        let firstMessage = Message(stableId: 0, stableVersion: 0, id: MessageId(peerId: fromUser1.id, namespace: 0, id: 0), globallyUniqueId: 0, groupingKey: 0, groupInfo: nil, threadId: nil, timestamp: 60 * 20 + 60*60*18, flags: [.Incoming], tags: [], globalTags: [], localTags: [], forwardInfo: nil, author: fromUser2, text: firstText, attributes: [], media: [], peers:SimpleDictionary([fromUser2.id : fromUser2, fromUser1.id : fromUser1]) , associatedMessages: SimpleDictionary(), associatedMessageIds: [])
         
         let firstEntry: ChatHistoryEntry = .MessageEntry(firstMessage, MessageIndex(firstMessage), true, .bubble, .Full(rank: nil), nil, ChatHistoryEntryData(nil, MessageEntryAdditionalData(), AutoplayMediaPreferences.defaultSettings))
 
-        let secondMessage = Message(stableId: 1, stableVersion: 0, id: MessageId(peerId: fromUser1.id, namespace: 0, id: 1), globallyUniqueId: 0, groupingKey: 0, groupInfo: nil, timestamp: 60 * 22 + 60*60*18, flags: [], tags: [], globalTags: [], localTags: [], forwardInfo: nil, author: fromUser1, text: secondText, attributes: [], media: [], peers:SimpleDictionary([fromUser2.id : fromUser2, fromUser1.id : fromUser1]) , associatedMessages: SimpleDictionary(), associatedMessageIds: [])
+        let secondMessage = Message(stableId: 1, stableVersion: 0, id: MessageId(peerId: fromUser1.id, namespace: 0, id: 1), globallyUniqueId: 0, groupingKey: 0, groupInfo: nil, threadId: nil, timestamp: 60 * 22 + 60*60*18, flags: [], tags: [], globalTags: [], localTags: [], forwardInfo: nil, author: fromUser1, text: secondText, attributes: [], media: [], peers:SimpleDictionary([fromUser2.id : fromUser2, fromUser1.id : fromUser1]) , associatedMessages: SimpleDictionary(), associatedMessageIds: [])
         
         let secondEntry: ChatHistoryEntry = .MessageEntry(secondMessage, MessageIndex(secondMessage), true, .bubble, .Full(rank: nil), nil, ChatHistoryEntryData(nil, MessageEntryAdditionalData(), AutoplayMediaPreferences.defaultSettings))
         
@@ -927,7 +932,7 @@ private final class WallpaperPreviewView: View {
         
         self.tableView.enumerateVisibleViews(with: { view in
             if let view = view as? ChatRowView {
-                view.updateBackground(animated: false)
+                view.updateBackground(animated: false, item: view.item)
             }
         })
         
@@ -1040,7 +1045,7 @@ private final class WallpaperPreviewView: View {
         
         self.tableView.enumerateVisibleViews(with: { view in
             if let view = view as? ChatRowView {
-                view.updateBackground(animated: animated)
+                view.updateBackground(animated: animated, item: view.item)
             }
         })
     }
@@ -1144,9 +1149,9 @@ private final class WallpaperPreviewView: View {
             var representations:[TelegramMediaImageRepresentation] = []
             representations.append(contentsOf: file.previewRepresentations)
             if let dimensions = file.dimensions {
-                representations.append(TelegramMediaImageRepresentation(dimensions: dimensions, resource: file.resource))
+                representations.append(TelegramMediaImageRepresentation(dimensions: dimensions, resource: file.resource, progressiveSizes: [], immediateThumbnailData: nil))
             } else {
-                representations.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(maximumSize), resource: file.resource))
+                representations.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(maximumSize), resource: file.resource, progressiveSizes: [], immediateThumbnailData: nil))
             }
             
             if isPattern {
@@ -1307,7 +1312,7 @@ private func cropWallpaperIfNeeded(_ wallpaper: Wallpaper, account: Account, rec
                         if CGImageDestinationFinalize(colorDestination) {
                             let thumdResource = LocalFileMediaResource(fileId: arc4random64())
                             account.postbox.mediaBox.storeResourceData(thumdResource.id, data: mutableData as Data)
-                            result.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(fittedImage.backingSize.aspectFitted(NSMakeSize(90, 90))), resource: thumdResource))
+                            result.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(fittedImage.backingSize.aspectFitted(NSMakeSize(90, 90))), resource: thumdResource, progressiveSizes: [], immediateThumbnailData: nil))
                         }
                     }
                     
@@ -1316,7 +1321,7 @@ private func cropWallpaperIfNeeded(_ wallpaper: Wallpaper, account: Account, rec
                      disposable.set(putToTemp(image: NSImage(cgImage: fittedImage, size: fittedDimensions), compress: false).start(next: { path in
                         copyToClipboard(path)
                         let resource = LocalFileReferenceMediaResource(localFilePath: path, randomId: arc4random64())
-                        result.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(fittedDimensions), resource: resource))
+                        result.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(fittedDimensions), resource: resource, progressiveSizes: [], immediateThumbnailData: nil))
                         
                         let wallpaper: Wallpaper = .image(result, settings: wallpaper.settings)
                         subscriber.putNext(wallpaper)
@@ -1451,7 +1456,7 @@ private func cropWallpaperIfNeeded(_ wallpaper: Wallpaper, account: Account, rec
                         if CGImageDestinationFinalize(colorDestination) {
                             let thumdResource = LocalFileMediaResource(fileId: arc4random64())
                             account.postbox.mediaBox.storeResourceData(thumdResource.id, data: mutableData as Data)
-                            result.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(fittedImage.backingSize.aspectFitted(NSMakeSize(90, 90))), resource: thumdResource))
+                            result.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(fittedImage.backingSize.aspectFitted(NSMakeSize(90, 90))), resource: thumdResource, progressiveSizes: [], immediateThumbnailData: nil))
                         }
                     }
                     
@@ -1500,7 +1505,12 @@ class WallpaperPreviewController: ModalViewController {
     }
     
     override func firstResponder() -> NSResponder? {
-        return genericView.colorPicker.firstView.textView
+        switch genericView.colorPicker.currentResponder {
+        case .first:
+            return genericView.colorPicker.firstView.textView.inputView
+        case .second:
+            return genericView.colorPicker.secondView?.textView.inputView
+        }
     }
     
     private let wallpaper: Wallpaper
@@ -1631,12 +1641,12 @@ class WallpaperPreviewController: ModalViewController {
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.genericView.magnifyView.zoomOut()
             return .invoked
         }, with: self, for: .Minus, priority: .modal)
         
-        window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.genericView.magnifyView.zoomIn()
             return .invoked
         }, with: self, for: .Equal, priority: .modal)

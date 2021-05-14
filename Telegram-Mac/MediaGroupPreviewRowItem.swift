@@ -19,13 +19,15 @@ class MediaGroupPreviewRowItem: TableRowItem {
     fileprivate let layout: GroupedLayout
     fileprivate let reorder:(Int, Int)->Void
     fileprivate let urls: [URL]
-    fileprivate let hasEditedData: [URL: EditedImageData]
+    fileprivate let editedData: [URL: EditedImageData]
     fileprivate let edit:(URL)->Void
+    fileprivate let paint:(URL)->Void
     fileprivate let delete:(URL)->Void
-    init(_ initialSize: NSSize, messages: [Message], urls: [URL], editedData: [URL : EditedImageData], edit: @escaping(URL)->Void, delete:@escaping(URL)->Void, context: AccountContext, reorder:@escaping(Int, Int)->Void) {
+    init(_ initialSize: NSSize, messages: [Message], urls: [URL], editedData: [URL : EditedImageData], edit: @escaping(URL)->Void, paint: @escaping(URL)->Void, delete:@escaping(URL)->Void, context: AccountContext, reorder:@escaping(Int, Int)->Void) {
         layout = GroupedLayout(messages)
-        self.hasEditedData = editedData
+        self.editedData = editedData
         self.edit = edit
+        self.paint = paint
         self.delete = delete
         self.urls = urls
         self.reorder = reorder
@@ -134,14 +136,18 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
                 content.addSubview(editControl)
                 control = editControl
             }
+            
             control.canEdit = item.layout.messages[i].media[0] is TelegramMediaImage
             control.set(edit: { [weak item] in
                 guard let item = item else {return}
                 item.edit(item.urls[i])
+            }, paint: { [weak item] in
+                guard let item = item else {return}
+                item.paint(item.urls[i])
             }, delete: { [weak item] in
-                    guard let item = item else {return}
-                    item.delete(item.urls[i])
-            }, hasEditedData: item.hasEditedData[item.urls[i]] != nil)
+                guard let item = item else {return}
+                item.delete(item.urls[i])
+            }, editedData: item.editedData[item.urls[i]])
             
         }
         
@@ -269,12 +275,15 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
             current.x -= (size.width - past.width) * ((point.x - past.minX) / past.width)
             current.y -= (size.height - past.height) * ((point.y - past.minY) / past.height)
             
-
-            contents[index].change(pos: current, animated: false)
             
             if size != contents[index].frame.size {
-                contents[index].change(size: size, animated: true)
+                contents[index].change(size: size, animated: true, timingFunction: .spring)
+                contents[index].layer?.animatePosition(from: contents[index].frame.origin - current, to: .zero, timingFunction: .spring, additive: true)
             }
+            contents[index].setFrameOrigin(current)
+
+
+            
             previous = point
             
             
@@ -284,7 +293,6 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
             layout.measure(NSMakeSize(frame.width - 20, frame.width - 20))
             
             if let new = layout.moveItemIfNeeded(at: index, point: point) {
-                
                 
                 for i in 0 ..< layout.count {
                     let current = item.layout.frame(at: i).offsetBy(dx: offset.x, dy: offset.y).origin
@@ -350,7 +358,7 @@ class MediaGroupPreviewRowView : TableRowView, ModalPreviewRowViewProtocol {
         
         for i in 0 ..< item.layout.count {
             contents[i].setFrameOrigin(item.layout.frame(at: i).origin.offsetBy(dx: offset.x, dy: offset.y))
-            if let control = contents[i].subviews.last {
+            if let control = contents[i].subviews.first(where: { $0 is MediaPreviewEditControl }) {
                 control.setFrameOrigin(NSMakePoint(contents[i].frame.width - control.frame.width - 10, contents[i].frame.height - control.frame.height - 10))
             }
         }

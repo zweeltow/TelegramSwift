@@ -67,9 +67,9 @@ class LocationPlaceSuggestionRowItem: GeneralRowItem {
         let attr = NSMutableAttributedString()
         var image: TelegramMediaImage? = nil
         switch result {
-        case let .externalReference(_, _, _, _, _, _, _, _, message):
+        case let .externalReference(values):
            
-            switch message {
+            switch values.message {
             case let .mapLocation(media, _):
                 if let venue = media.venue {
                     _ = attr.append(string: venue.title, color: theme.colors.text, font: .medium(.text))
@@ -77,7 +77,7 @@ class LocationPlaceSuggestionRowItem: GeneralRowItem {
                     _ = attr.append(string: venue.address, color: theme.colors.grayText, font: .normal(.text))
                     if let type = venue.type {
                         let resource = HttpReferenceMediaResource(url: "https://ss3.4sqi.net/img/categories_v2/\(type)_88.png", size: nil)
-                        let representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 60, height: 60), resource: resource)
+                        let representation = TelegramMediaImageRepresentation(dimensions: PixelDimensions(width: 60, height: 60), resource: resource, progressiveSizes: [], immediateThumbnailData: nil)
                         image = TelegramMediaImage(imageId: MediaId(namespace: 0, id: 0), representations: [representation], immediateThumbnailData: nil, reference: nil, partialReference: nil, flags: [])
                     }
                 }

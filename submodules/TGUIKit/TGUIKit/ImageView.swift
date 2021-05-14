@@ -24,9 +24,14 @@ open class ImageView: NSView {
     
     open var image:CGImage? {
         didSet {
+            let wasImage = self.layer?.contents != nil
             self.layer?.contents = image
             if animates {
-                animate()
+                if !wasImage {
+                    self.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
+                } else {
+                    animate()
+                }
             }
         }
     }
@@ -42,13 +47,41 @@ open class ImageView: NSView {
             setFrameSize(image.backingSize)
         }
     }
+    
+    open override func hitTest(_ point: NSPoint) -> NSView? {
+        if isEventLess {
+            let view = super.hitTest(point)
+            if let view = view as? View {
+                if view.isEventLess || view === self {
+                    return nil
+                }
+            }
+            if let view = view as? ImageView {
+                if view.isEventLess || view === self {
+                    return nil
+                }
+            }
+            return view
+        } else {
+            return super.hitTest(point)
+        }
+    }
 
     open override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         return true
     }
+
+    open override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+    }
     
     override public init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        self.wantsLayer = true
+        layerContentsRedrawPolicy = .never
+    }
+    init() {
+        super.init(frame: .zero)
         self.wantsLayer = true
         layerContentsRedrawPolicy = .never
     }
@@ -79,5 +112,7 @@ open class ImageView: NSView {
     open func change(opacity to: CGFloat, animated: Bool = true, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) {
         super._change(opacity: to, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction, completion: completion)
     }
+
+
     
 }

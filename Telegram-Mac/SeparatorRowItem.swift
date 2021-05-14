@@ -18,36 +18,27 @@ enum SeparatorBlockState  {
 
 
 
-class SeparatorRowItem: TableRowItem {
+class SeparatorRowItem: GeneralRowItem {
     public var text:NSAttributedString;
     
-    private let h:CGFloat
     let rightText:NSAttributedString?
-    var border:BorderType = [.Right]
     let state:SeparatorBlockState
-    let action: (()->Void)?
-    override var height: CGFloat {
-        return h
-    }
-    private let _stableId:AnyHashable
-    override var stableId: AnyHashable {
-        return _stableId
-    }
     
-    init(_ initialSize:NSSize, _ stableId:AnyHashable, string:String, right:String? = nil, state: SeparatorBlockState = .none, height:CGFloat = 20.0, action: (()->Void)? = nil) {
-        self._stableId = stableId
-        self.h = height
-        self.action = action
+    let leftInset: CGFloat?
+    let itemAction: (()->Void)?
+    init(_ initialSize:NSSize, _ stableId:AnyHashable, string:String, right:String? = nil, state: SeparatorBlockState = .none, height:CGFloat = 20.0, action: (()->Void)? = nil, leftInset: CGFloat? = nil, border:BorderType = [], customTheme: GeneralRowItem.Theme = GeneralRowItem.Theme()) {
+        self.leftInset = leftInset
         self.state = state
-        text = .initialize(string: string, color: theme.colors.grayText, font:.normal(.short))
+        self.itemAction = action
+        text = .initialize(string: string, color: customTheme.grayTextColor, font:.normal(.short))
         if let right = right {
-            self.rightText = .initialize(string: right, color: theme.colors.grayText, font:.normal(.short))
+            self.rightText = .initialize(string: right, color: customTheme.grayTextColor, font:.normal(.short))
         } else {
             rightText = nil
         }
         
         
-        super.init(initialSize)
+        super.init(initialSize, height: height, stableId: stableId, type: .none, viewType: .legacy, border: border, error: nil, customTheme: customTheme)
     }
     override var instantlyResize: Bool {
         return true
@@ -71,6 +62,12 @@ class SeparatorRowView: TableRowView {
     }
     
     override var backdorColor: NSColor {
+        if let item = item as? GeneralRowItem, let customTheme = item.customTheme {
+            return customTheme.grayBackground
+        }
+        if let backgroundColor = (item as? SeparatorRowItem)?.backgroundColor {
+            return backgroundColor
+        }
         return theme.colors.grayBackground
     }
     
@@ -87,8 +84,8 @@ class SeparatorRowView: TableRowView {
 
             let rect = NSMakeRect(frame.width - 10 - layout.size.width, round((frame.height - layout.size.height)/2.0), layout.size.width, frame.height)
             if NSPointInRect(point, rect) {
-                if let action = item.action {
-                    action()
+                if let itemAction = item.itemAction {
+                    itemAction()
                 } else {
                     super.mouseDown(with: event)
                 }
@@ -112,12 +109,12 @@ class SeparatorRowView: TableRowView {
             let (layout, apply) = TextNode.layoutText(maybeNode: text, item.text, nil, 1, .end, NSMakeSize(frame.width, frame.height), nil,false, .left)
             let textPoint:NSPoint
             if let text = item.rightText {
-                textPoint = NSMakePoint(10, round((frame.height - layout.size.height)/2.0))
+                textPoint = NSMakePoint(item.leftInset ?? 10, round((frame.height - layout.size.height)/2.0) - 1)
                 let (layout, apply) = TextNode.layoutText(maybeNode: stateText, text, nil, 1, .end, NSMakeSize(frame.width, frame.height), nil, false, .left)
-                apply.draw(NSMakeRect(frame.width - 10 - layout.size.width, round((frame.height - layout.size.height)/2.0), layout.size.width, layout.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
+                apply.draw(NSMakeRect(frame.width - 10 - layout.size.width, round((frame.height - layout.size.height)/2.0) - 1, layout.size.width, layout.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
                 
             } else {
-                textPoint = NSMakePoint(10, round((frame.height - layout.size.height)/2.0))
+                textPoint = NSMakePoint(item.leftInset ?? 10, round((frame.height - layout.size.height)/2.0) - 1)
                 
             }
             apply.draw(NSMakeRect(textPoint.x, textPoint.y, layout.size.width, layout.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)

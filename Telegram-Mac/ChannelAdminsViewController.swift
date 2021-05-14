@@ -201,6 +201,12 @@ private func channelAdminsControllerEntries(accountPeerId: PeerId, view: PeerVie
             entries.append(.adminPeerItem(sectionId: sectionId, index, participant, editing, bestGeneralViewType(participants, for: i)))
             index += 1
         }
+        
+        if index > 0 {
+            entries.append(.section(sectionId))
+            sectionId += 1
+
+        }
     } else  if let peer = view.peers[view.peerId] as? TelegramGroup {
         
         entries.append(.adminsHeader(sectionId: sectionId, L10n.adminsGroupAdmins, .textTopItem))
@@ -228,38 +234,43 @@ private func channelAdminsControllerEntries(accountPeerId: PeerId, view: PeerVie
         }
         
         var index: Int32 = 0
-        for participant in combinedParticipants.sorted(by: <) {
-            if !state.removedPeerIds.contains(participant.peer.id) {
-                var editable = true
-                switch participant.participant {
-                case .creator:
+        let participants = combinedParticipants.sorted(by: <).filter {
+            !state.removedPeerIds.contains($0.peer.id)
+        }
+        for (i, participant) in participants.enumerated() {
+            var editable = true
+            switch participant.participant {
+            case .creator:
+                editable = false
+            case let .member(id, _, adminInfo, _, _):
+                if id == accountPeerId {
                     editable = false
-                case let .member(id, _, adminInfo, _, _):
-                    if id == accountPeerId {
-                        editable = false
-                    } else if let adminInfo = adminInfo {
-                        var creator: Bool = false
-                        if case .creator = peer.role {
-                            creator = true
-                        }
-                        if creator || adminInfo.promotedBy == accountPeerId {
-                            editable = true
-                        } else {
-                            editable = false
-                        }
+                } else if let adminInfo = adminInfo {
+                    var creator: Bool = false
+                    if case .creator = peer.role {
+                        creator = true
+                    }
+                    if creator || adminInfo.promotedBy == accountPeerId {
+                        editable = true
                     } else {
                         editable = false
                     }
-                }
-                let editing:ShortPeerDeleting?
-                if state.editing {
-                    editing = ShortPeerDeleting(editable: editable)
                 } else {
-                    editing = nil
+                    editable = false
                 }
-                entries.append(.adminPeerItem(sectionId: sectionId, index, participant, editing, .singleItem))
-                index += 1
             }
+            let editing:ShortPeerDeleting?
+            if state.editing {
+                editing = ShortPeerDeleting(editable: editable)
+            } else {
+                editing = nil
+            }
+            entries.append(.adminPeerItem(sectionId: sectionId, index, participant, editing, bestGeneralViewType(participants, for: i)))
+            index += 1
+        }
+        if index > 0 {
+            entries.append(.section(sectionId))
+            sectionId += 1
         }
     }
     
@@ -370,9 +381,9 @@ class ChannelAdminsViewController: EditableViewController<TableView> {
         
         
         let arguments = ChannelAdminsControllerArguments(context: context, addAdmin: {
-            let behavior = peerId.namespace == Namespaces.Peer.CloudGroup ? SelectGroupMembersBehavior(peerId: peerId, limit: 1) : SelectChannelMembersBehavior(peerId: peerId, limit: 1)
+            let behavior = peerId.namespace == Namespaces.Peer.CloudGroup ? SelectGroupMembersBehavior(peerId: peerId, limit: 1) : SelectChannelMembersBehavior(peerId: peerId, peerChannelMemberContextsManager: context.peerChannelMemberCategoriesContextsManager, limit: 1)
             
-            _ = (selectModalPeers(context: context, title: L10n.adminsAddAdmin, limit: 1, behavior: behavior, confirmation: { peerIds in
+            _ = (selectModalPeers(window: context.window, account: context.account, title: L10n.adminsAddAdmin, limit: 1, behavior: behavior, confirmation: { peerIds in
                 if let _ = behavior.participants[peerId] {
                      return .single(true)
                 } else {
@@ -399,7 +410,7 @@ class ChannelAdminsViewController: EditableViewController<TableView> {
                         }
                     }))
             } else {
-                self?.removeAdminDisposable.set((context.peerChannelMemberCategoriesContextsManager.updateMemberAdminRights(account: context.account, peerId: peerId, memberId: adminId, adminRights: TelegramChatAdminRights(flags: []), rank: nil)
+                self?.removeAdminDisposable.set((context.peerChannelMemberCategoriesContextsManager.updateMemberAdminRights(account: context.account, peerId: peerId, memberId: adminId, adminRights: nil, rank: nil)
                     |> deliverOnMainQueue).start(completed: {
                         updateState {
                             return $0.withUpdatedRemovingPeerId(nil)
@@ -450,12 +461,12 @@ class ChannelAdminsViewController: EditableViewController<TableView> {
                         if let peer = peerView.peers[participant.peerId] {
                             switch participant {
                             case .creator:
-                                result.append(RenderedChannelParticipant(participant: .creator(id: peer.id, rank: nil), peer: peer))
+                                result.append(RenderedChannelParticipant(participant: .creator(id: peer.id, adminInfo: nil, rank: nil), peer: peer))
                             case .admin:
                                 var peers: [PeerId: Peer] = [:]
                                 peers[creator.id] = creator
                                 peers[peer.id] = peer
-                                result.append(RenderedChannelParticipant(participant: .member(id: peer.id, invitedAt: 0, adminInfo: ChannelParticipantAdminInfo(rights: TelegramChatAdminRights(flags: .groupSpecific), promotedBy: creator.id, canBeEditedByAccountPeer: creator.id == context.account.peerId), banInfo: nil, rank: nil), peer: peer, peers: peers))
+                                result.append(RenderedChannelParticipant(participant: .member(id: peer.id, invitedAt: 0, adminInfo: ChannelParticipantAdminInfo(rights: TelegramChatAdminRights(rights: .groupSpecific), promotedBy: creator.id, canBeEditedByAccountPeer: creator.id == context.account.peerId), banInfo: nil, rank: nil), peer: peer, peers: peers))
                             case .member:
                                 break
                             }

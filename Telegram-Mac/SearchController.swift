@@ -13,6 +13,107 @@ import Postbox
 import TelegramCore
 import SyncCore
 
+private final class SearchCacheData {
+    
+    fileprivate struct MessageCacheKey : Hashable {
+        let query: String
+        let tags: SearchTags?
+        init(query: String, tags: SearchTags? = nil) {
+            self.query = query
+            self.tags = tags
+        }
+        
+        static func key(query: String, tags: SearchTags? = nil) -> MessageCacheKey {
+            return .init(query: query, tags: tags)
+        }
+    }
+    
+    private var previousMessages:[ChatListSearchEntry] = []
+    private var previousLocalPeers:[ChatListSearchEntry] = []
+    private var previousRemotePeers:[ChatListSearchEntry] = []
+
+    private var messages: [MessageCacheKey: [ChatListSearchEntry]] = [:]
+    private var remotePeers: [String:  [ChatListSearchEntry]] = [:]
+    private var localPeers: [String:  [ChatListSearchEntry]] = [:]
+
+    func cacheMessages(_ messages:[ChatListSearchEntry], for key: MessageCacheKey) -> Void {
+        self.messages[key] = messages
+        previousMessages = messages
+    }
+    func cacheRemotePeers(_ peers:[ChatListSearchEntry], for key: String) -> Void {
+        self.remotePeers[key] = peers
+        previousRemotePeers = peers
+        
+        var stableIds:Set<ChatListSearchEntryStableId> = Set()
+        for peer in peers {
+            assert(!stableIds.contains(peer.stableId))
+            stableIds.insert(peer.stableId)
+        }
+        
+    }
+    func cacheLocalPeers(_ peers:[ChatListSearchEntry], for key: String) -> Void {
+        self.localPeers[key] = peers
+        previousLocalPeers = peers
+        
+        var stableIds:Set<ChatListSearchEntryStableId> = Set()
+        for peer in peers {
+            assert(!stableIds.contains(peer.stableId))
+            stableIds.insert(peer.stableId)
+        }
+        
+    }
+    func cachedMessages(for key: MessageCacheKey) -> [ChatListSearchEntry] {
+        let value = self.messages[key] ?? previousMessages
+        return value
+    }
+    func cachedRemotePeers(for key: String) -> [ChatListSearchEntry] {
+        let value = self.remotePeers[key] ?? previousRemotePeers
+        return value
+    }
+    func cachedLocalPeers(for key: String) -> [ChatListSearchEntry] {
+        let value = self.localPeers[key] ?? previousLocalPeers
+        return value
+    }
+}
+
+
+struct ExternalSearchMessages {
+    let messages:[Message]
+    let count: Int32
+    let tags: MessageTags?
+    init(messages: [Message] = [], count: Int32 = 0, tags: MessageTags? = nil) {
+        self.messages = messages
+        self.count = count
+        self.tags = tags
+    }
+    func withUpdatedTags(_ tags: MessageTags?) -> ExternalSearchMessages {
+        return ExternalSearchMessages(messages: self.messages, count: self.count, tags: tags)
+    }
+    var title: String? {
+        let text: String?
+        if tags == .photoOrVideo {
+            text = L10n.peerMediaTitleSearchMediaCountable(Int(count))
+        } else if tags == .photo {
+            text = L10n.peerMediaTitleSearchPhotosCountable(Int(count))
+        } else if tags == .video {
+            text = L10n.peerMediaTitleSearchVideosCountable(Int(count))
+        } else if tags == .gif {
+            text = L10n.peerMediaTitleSearchGIFsCountable(Int(count))
+        } else if tags == .file {
+            text = L10n.peerMediaTitleSearchFilesCountable(Int(count))
+        } else if tags == .webPage {
+            text = L10n.peerMediaTitleSearchLinksCountable(Int(count))
+        } else if tags == .music {
+            text = L10n.peerMediaTitleSearchMusicCountable(Int(count))
+        } else {
+            text = nil
+        }
+        if let text = text {
+            return text.replacingOccurrences(of: "\(count)", with: count.formattedWithSeparator)
+        }
+        return text
+    }
+}
 
 enum UnreadSearchBadge : Equatable {
     case none
@@ -25,11 +126,13 @@ final class SearchControllerArguments {
     let removeRecentPeerId:(PeerId)->Void
     let clearRecent:()->Void
     let openTopPeer:(PopularItemType)->Void
-    init(context: AccountContext, removeRecentPeerId:@escaping(PeerId)->Void, clearRecent:@escaping()->Void, openTopPeer:@escaping(PopularItemType)->Void) {
+    let setPeerAsTag:(Peer)->Void
+    init(context: AccountContext, removeRecentPeerId:@escaping(PeerId)->Void, clearRecent:@escaping()->Void, openTopPeer:@escaping(PopularItemType)->Void, setPeerAsTag: @escaping(Peer)->Void) {
         self.context = context
         self.removeRecentPeerId = removeRecentPeerId
         self.clearRecent = clearRecent
         self.openTopPeer = openTopPeer
+        self.setPeerAsTag = setPeerAsTag
     }
     
 }
@@ -75,7 +178,7 @@ private struct SearchSecretChatWrapper : Equatable {
 
 
 fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
-    case localPeer(Peer, Int, SearchSecretChatWrapper?, UnreadSearchBadge, Bool)
+    case localPeer(Peer, Int, SearchSecretChatWrapper?, UnreadSearchBadge, Bool, Bool)
     case recentlySearch(Peer, Int, SearchSecretChatWrapper?, PeerStatusStringResult, UnreadSearchBadge, Bool)
     case globalPeer(FoundPeer, UnreadSearchBadge, Int)
     case savedMessages(Peer)
@@ -85,7 +188,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
     case emptySearch
     var stableId: ChatListSearchEntryStableId {
         switch self {
-        case let .localPeer(peer, _, secretChat, _, _):
+        case let .localPeer(peer, _, secretChat, _, _, _):
             if let secretChat = secretChat {
                 return .secretChat(secretChat.peerId)
             }
@@ -112,7 +215,7 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
     
     var index:Int {
         switch self {
-        case let .localPeer(_,index, _, _, _):
+        case let .localPeer(_,index, _, _, _, _):
             return index
         case let .globalPeer(_, _,index):
             return index
@@ -133,20 +236,20 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
     
     static func ==(lhs: ChatListSearchEntry, rhs: ChatListSearchEntry) -> Bool {
         switch lhs {
-        case let .localPeer(lhsPeer, lhsIndex, lhsSecretChat, lhsBadge, lhsDrawBorder):
-            if case let .localPeer(rhsPeer, rhsIndex, rhsSecretChat, rhsBadge, rhsDrawBorder) = rhs, lhsPeer.isEqual(rhsPeer) && lhsIndex == rhsIndex && lhsSecretChat == rhsSecretChat && lhsDrawBorder == rhsDrawBorder && lhsBadge == rhsBadge {
+        case let .localPeer(lhsPeer, index, isSecretChat, badge, drawBorder, canAddAsTag):
+            if case .localPeer(let rhsPeer, index, isSecretChat, badge, drawBorder, canAddAsTag) = rhs, lhsPeer.isEqual(rhsPeer) {
                 return true
             } else {
                 return false
             }
-        case let .recentlySearch(lhsPeer, lhsIndex, lhsSecretChat, lhsStatus, lhsBadge, lhsDrawBorder):
-            if case let .recentlySearch(rhsPeer, rhsIndex, rhsSecretChat, rhsStatus, rhsBadge, rhsDrawBorder) = rhs, lhsPeer.isEqual(rhsPeer) && lhsIndex == rhsIndex && lhsSecretChat == rhsSecretChat && lhsDrawBorder == rhsDrawBorder && lhsStatus == rhsStatus && lhsBadge == rhsBadge {
+        case let .recentlySearch(lhsPeer, index, isSecretChat, status, badge, drawBorder):
+            if case .recentlySearch(let rhsPeer, index, isSecretChat, status, badge, drawBorder) = rhs, lhsPeer.isEqual(rhsPeer) {
                 return true
             } else {
                 return false
             }
-        case let .globalPeer(lhsPeer, lhsBadge, lhsIndex):
-            if case let .globalPeer(rhsPeer, rhsBadge, rhsIndex) = rhs, lhsPeer.peer.isEqual(rhsPeer.peer) && lhsIndex == rhsIndex && lhsPeer.subscribers == rhsPeer.subscribers && lhsBadge == rhsBadge {
+        case let .globalPeer(lhsPeer, badge, index):
+            if case .globalPeer(let rhsPeer, badge, index) = rhs, lhsPeer.peer.isEqual(rhsPeer.peer) && lhsPeer.subscribers == rhsPeer.subscribers {
                 return true
             } else {
                 return false
@@ -218,26 +321,98 @@ fileprivate enum ChatListSearchEntry: Comparable, Identifiable {
 }
 
 
-fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry>]?, to:[AppearanceWrapperEntry<ChatListSearchEntry>], arguments:SearchControllerArguments, pinnedItems:[PinnedItemId], initialSize:NSSize, animated: Bool) -> TableEntriesTransition<[AppearanceWrapperEntry<ChatListSearchEntry>]> {
+private func peerContextMenuItems(peer: Peer, pinnedItems:[PinnedItemId], arguments: SearchControllerArguments) -> Signal<[ContextMenuItem], NoError> {
+    var items:[ContextMenuItem] = []
     
     let togglePin:(Peer) -> Void = { peer in
         let updatePeer = arguments.context.account.postbox.transaction { transaction -> Void in
             updatePeers(transaction: transaction, peers: [peer], update: { (_, updated) -> Peer? in
                 return updated
             })
-        } |> mapToSignal { _ -> Signal<TogglePeerChatPinnedResult, NoError> in
-            return toggleItemPinned(postbox: arguments.context.account.postbox, location: .group(.root), itemId: .peer(peer.id))
-        } |> deliverOnMainQueue
+            } |> mapToSignal { _ -> Signal<TogglePeerChatPinnedResult, NoError> in
+                return toggleItemPinned(postbox: arguments.context.account.postbox, location: .group(.root), itemId: .peer(peer.id))
+            } |> deliverOnMainQueue
         
         _ = updatePeer.start(next: { result in
             switch result {
             case .limitExceeded:
-                alert(for: mainWindow, info: L10n.chatListContextPinErrorNew)
+                confirm(for: arguments.context.window, information: L10n.chatListContextPinErrorNew2, okTitle: L10n.alertOK, cancelTitle: "", thridTitle: L10n.chatListContextPinErrorNewSetupFolders, successHandler: { result in
+                    switch result {
+                    case .thrid:
+                        arguments.context.sharedContext.bindings.rootNavigation().push(ChatListFiltersListController(context: arguments.context))
+                    default:
+                        break
+                    }
+                })
             default:
                 break
             }
         })
     }
+    
+    var isPinned: Bool = false
+    for item in pinnedItems {
+        switch item {
+        case let .peer(peerId):
+            if peerId == peer.id {
+                isPinned = true
+                break
+            }
+        }
+    }
+    
+    items.append(ContextMenuItem(isPinned ? L10n.chatListContextUnpin : L10n.chatListContextPin, handler: {
+        togglePin(peer)
+    }))
+    
+    let peerId = peer.id
+    
+    return .single(items) |> mapToSignal { items in
+        return chatListFilterPreferences(postbox: arguments.context.account.postbox) |> deliverOnMainQueue |> take(1) |> map { filters -> [ContextMenuItem] in
+            var items = items
+            var submenu: [ContextMenuItem] = []
+            if peerId.namespace != Namespaces.Peer.SecretChat {
+                for item in filters.list {
+                    submenu.append(ContextMenuItem(item.title, handler: {
+                        _ = updateChatListFiltersInteractively(postbox: arguments.context.account.postbox, { list in
+                            var list = list
+                            for (i, folder) in list.enumerated() {
+                                var folder = folder
+                                if folder.id == item.id {
+                                    if item.data.includePeers.peers.contains(peerId) {
+                                        var peers = folder.data.includePeers.peers
+                                        peers.removeAll(where: { $0 == peerId })
+                                        folder.data.includePeers.setPeers(peers)
+                                    } else {
+                                        folder.data.includePeers.setPeers(folder.data.includePeers.peers + [peerId])
+                                    }
+                                    list[i] = folder
+                                    
+                                }
+                            }
+                            return list
+                        }).start()
+                    }, state: item.data.includePeers.peers.contains(peerId) ? NSControl.StateValue.on : nil))
+                }
+            }
+            
+            if !submenu.isEmpty {
+                items.append(ContextSeparatorItem())
+                let item = ContextMenuItem(L10n.chatListFilterAddToFolder)
+                let menu = NSMenu()
+                for item in submenu {
+                    menu.addItem(item)
+                }
+                item.submenu = menu
+                items.append(item)
+            }
+            return items
+        }
+    }
+}
+
+
+fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry>]?, to:[AppearanceWrapperEntry<ChatListSearchEntry>], arguments:SearchControllerArguments, pinnedItems:[PinnedItemId], initialSize:NSSize, animated: Bool) -> TableEntriesTransition<[AppearanceWrapperEntry<ChatListSearchEntry>]> {
     
     let (deleted,inserted, updated) = proccessEntriesWithoutReverse(from, right: to, { entry -> TableRowItem in
         switch entry.entry {
@@ -262,97 +437,28 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry
                     status = tr(L10n.searchGlobalGroup1Countable(username, Int(subscribers)))
                 }
             }
-            
-            
-            
             return RecentPeerRowItem(initialSize, peer: foundPeer.peer, account: arguments.context.account, stableId: entry.stableId, statusStyle:ControlStyle(font:.normal(.text), foregroundColor: theme.colors.grayText, highlightColor:.white), status: status, borderType: [.Right], contextMenuItems: {
-                var items:[ContextMenuItem] = []
-                
-                var isPinned: Bool = false
-                for item in pinnedItems {
-                    switch item {
-                    case let .peer(peerId):
-                        if peerId == foundPeer.peer.id {
-                            isPinned = true
-                            break
-                        }
-                    }
-                }
-                
-                items.append(ContextMenuItem(isPinned ? L10n.chatListContextUnpin : L10n.chatListContextPin, handler: {
-                    togglePin(foundPeer.peer)
-                }))
-                
-                return items
+                return peerContextMenuItems(peer: foundPeer.peer, pinnedItems: pinnedItems, arguments: arguments)
             }, unreadBadge: badge)
-        case let .localPeer(peer, _, secretChat, badge, drawBorder):
-            return RecentPeerRowItem(initialSize, peer: peer, account: arguments.context.account, stableId: entry.stableId, titleStyle: ControlStyle(font: .medium(.text), foregroundColor: secretChat != nil ? theme.colors.accent : theme.colors.text, highlightColor:.white), borderType: [.Right], drawCustomSeparator: drawBorder, isLookSavedMessage: true, drawLastSeparator: true, canRemoveFromRecent: false, contextMenuItems: {
-                var items:[ContextMenuItem] = []
-                
-                var isPinned: Bool = false
-                for item in pinnedItems {
-                    switch item {
-                    case let .peer(peerId):
-                        if peerId == peer.id {
-                            isPinned = true
-                            break
-                        }
-                    }
-                }
-                
-                items.append(ContextMenuItem(isPinned ? L10n.chatListContextUnpin : L10n.chatListContextPin, handler: {
-                    togglePin(peer)
-                }))
-                
-                return items
-            }, unreadBadge: badge)
+        case let .localPeer(peer, _, secretChat, badge, drawBorder, canAddAsTag):
+            return RecentPeerRowItem(initialSize, peer: peer, account: arguments.context.account, stableId: entry.stableId, titleStyle: ControlStyle(font: .medium(.text), foregroundColor: secretChat != nil ? theme.colors.accent : theme.colors.text, highlightColor:.white), borderType: [.Right], drawCustomSeparator: drawBorder, isLookSavedMessage: true, drawLastSeparator: true, canRemoveFromRecent: false, controlAction: {
+                arguments.setPeerAsTag(peer)
+            }, contextMenuItems: {
+                return peerContextMenuItems(peer: peer, pinnedItems: pinnedItems, arguments: arguments)
+            }, unreadBadge: badge, canAddAsTag: canAddAsTag)
         case let .recentlySearch(peer, _, secretChat, status, badge, drawBorder):
-            return RecentPeerRowItem(initialSize, peer: peer, account: arguments.context.account, stableId: entry.stableId, titleStyle: ControlStyle(font: .medium(.text), foregroundColor: secretChat != nil ? theme.colors.accent : theme.colors.text, highlightColor:.white), statusStyle: ControlStyle(font:.normal(.text), foregroundColor: status.status.attribute(NSAttributedString.Key.foregroundColor, at: 0, effectiveRange: nil) as? NSColor ?? theme.colors.grayText, highlightColor:.white), status: status.status.string, borderType: [.Right], drawCustomSeparator: drawBorder, isLookSavedMessage: true, drawLastSeparator: true, canRemoveFromRecent: true, removeAction: {
+            return RecentPeerRowItem(initialSize, peer: peer, account: arguments.context.account, stableId: entry.stableId, titleStyle: ControlStyle(font: .medium(.text), foregroundColor: secretChat != nil ? theme.colors.accent : theme.colors.text, highlightColor:.white), statusStyle: ControlStyle(font:.normal(.text), foregroundColor: status.status.attribute(NSAttributedString.Key.foregroundColor, at: 0, effectiveRange: nil) as? NSColor ?? theme.colors.grayText, highlightColor:.white), status: status.status.string, borderType: [.Right], drawCustomSeparator: drawBorder, isLookSavedMessage: true, drawLastSeparator: true, canRemoveFromRecent: true, controlAction: {
                 if let secretChat = secretChat {
                     arguments.removeRecentPeerId(secretChat.peerId)
                 } else {
                     arguments.removeRecentPeerId(peer.id)
                 }
             }, contextMenuItems: {
-                var items:[ContextMenuItem] = []
-                
-                var isPinned: Bool = false
-                for item in pinnedItems {
-                    switch item {
-                    case let .peer(peerId):
-                        if peerId == peer.id {
-                            isPinned = true
-                            break
-                        }
-                    }
-                }
-                
-                items.append(ContextMenuItem(isPinned ? L10n.chatListContextUnpin : L10n.chatListContextPin, handler: {
-                    togglePin(peer)
-                }))
-                
-                return items
+                return peerContextMenuItems(peer: peer, pinnedItems: pinnedItems, arguments: arguments)
             }, unreadBadge: badge)
         case let .savedMessages(peer):
             return RecentPeerRowItem(initialSize, peer: peer, account: arguments.context.account, stableId: entry.stableId, titleStyle: ControlStyle(font: .medium(.text), foregroundColor: theme.colors.text, highlightColor:.white), borderType: [.Right], drawCustomSeparator: false, isLookSavedMessage: true, contextMenuItems: {
-                var items:[ContextMenuItem] = []
-                
-                var isPinned: Bool = false
-                for item in pinnedItems {
-                    switch item {
-                    case let .peer(peerId):
-                        if peerId == peer.id {
-                            isPinned = true
-                            break
-                        }
-                    }
-                }
-                
-                items.append(ContextMenuItem(isPinned ? L10n.chatListContextUnpin : L10n.chatListContextPin, handler: {
-                    togglePin(peer)
-                }))
-                
-                return items
+                return peerContextMenuItems(peer: peer, pinnedItems: pinnedItems, arguments: arguments)
             })
         case let .separator(text, index, state):
             let right:String?
@@ -367,7 +473,7 @@ fileprivate func prepareEntries(from:[AppearanceWrapperEntry<ChatListSearchEntry
             default:
                 right = nil
             }
-            return SeparatorRowItem(initialSize, ChatListSearchEntryStableId.separator(index), string: text.uppercased(), right: right?.lowercased(), state: state)
+            return SeparatorRowItem(initialSize, ChatListSearchEntryStableId.separator(index), string: text.uppercased(), right: right?.lowercased(), state: state, border: [.Right])
         case .emptySearch:
             return SearchEmptyRowItem(initialSize, stableId: ChatListSearchEntryStableId.emptySearch, border: [.Right])
         case let .topPeers(_, articlesEnabled, unreadArticles, selfPeer, peers, unread, online):
@@ -411,6 +517,24 @@ struct AppSearchOptions : OptionSet {
     static let chats = AppSearchOptions(rawValue: 2)
 }
 
+
+struct SearchTags : Hashable {
+    let messageTags:MessageTags?
+    let peerTag: PeerId?
+    
+    var isEmpty: Bool {
+        return messageTags == nil && peerTag == nil
+    }
+    
+    var location: SearchMessagesLocation {
+        if let peerTag = peerTag {
+            return .peer(peerId: peerTag, fromId: nil, tags: messageTags, topMsgId: nil, minDate: nil, maxDate: nil)
+        } else {
+            return .general(tags: messageTags, minDate: nil, maxDate: nil)
+        }
+    }
+}
+
 class SearchController: GenericViewController<TableView>,TableViewDelegate {
     
     
@@ -435,6 +559,11 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
     
     private let isRevealed: ValuePromise<Bool> = ValuePromise(false, ignoreRepeated: true)
     
+    private let globalTagsValue: ValuePromise<SearchTags> = ValuePromise(SearchTags(messageTags: nil, peerTag: nil), ignoreRepeated: true)
+
+    
+    var setPeerAsTag: ((Peer?)->Void)? = nil
+    
     var pinnedItems:[PinnedItemId] = [] {
         didSet {
             pinnedPromise.set(pinnedItems)
@@ -442,7 +571,21 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
     }
     
     let isLoading = Promise<Bool>(false)
+    private(set) var searchTags: SearchTags?
     
+    public func updateSearchTags(_ globalTags: SearchTags) {
+        self._messagesValue.set(.single((ExternalSearchMessages(), false)))
+        self.globalTagsValue.set(globalTags)
+        self.searchTags = globalTags
+    }
+    
+    private var _messagesValue:Promise<(ExternalSearchMessages?, Bool)> = Promise()
+    
+    var externalSearchMessages:Signal<ExternalSearchMessages?, NoError> {
+        return combineLatest(self._messagesValue.get() |> filter { $0.1 } |> map { $0.0 }, self.globalTagsValue.get() |> map { $0.messageTags }) |> map {
+            return $0.0?.withUpdatedTags($0.1)
+        }
+    }
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -462,13 +605,16 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
 
         let isRevealed = self.isRevealed.get()
         
+        let cachedData: Atomic<SearchCacheData> = Atomic(value: SearchCacheData())
+        
         let arguments = self.arguments
         let statePromise = self.statePromise.get()
         let atomicSize = self.atomicSize
         let previousSearchItems = Atomic<[AppearanceWrapperEntry<ChatListSearchEntry>]>(value: [])
         let groupId: PeerGroupId = self.groupId
-        let searchItems = searchQuery.get() |> mapToSignal { query -> Signal<([ChatListSearchEntry], Bool, Bool, SearchMessagesState?), NoError> in
-            if let query = query, !query.isEmpty {
+        let searchItems = combineLatest(globalTagsValue.get(), searchQuery.get()) |> mapToSignal { globalTags, query -> Signal<([ChatListSearchEntry], Bool, Bool, SearchMessagesState?, SearchMessagesResult?), NoError> in
+            let query = query ?? ""
+            if !query.isEmpty || !globalTags.isEmpty {
                 
 
                 var ids:[PeerId:PeerId] = [:]
@@ -510,7 +656,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                 }
                 
                 
-                let foundLocalPeers: Signal<[ChatListSearchEntry], NoError> = query.hasPrefix("#") || !options.contains(.chats) ? .single([]) : combineLatest(localPeers, context.account.postbox.loadedPeerWithId(context.peerId), foundQueryPeers.get())
+                let foundLocalPeers: Signal<[ChatListSearchEntry], NoError> = query.hasPrefix("#") || !options.contains(.chats) || !globalTags.isEmpty ? .single([]) : combineLatest(localPeers, context.account.postbox.loadedPeerWithId(context.peerId), foundQueryPeers.get())
                     |> map { peers, accountPeer, inLinkPeer -> [ChatListSearchEntry] in
                         var entries: [ChatListSearchEntry] = []
                         
@@ -524,7 +670,8 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                         
                         if let peer = inLinkPeer {
                             if ids[peer.id] == nil {
-                                entries.append(.localPeer(peer, index, nil, .none, true))
+                                ids[peer.id] = peer.id
+                                entries.append(.localPeer(peer, index, nil, .none, true, false))
                                 index += 1
                             }
                         }
@@ -537,7 +684,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                                     if rendered.peers[rendered.peerId] is TelegramSecretChat {
                                         wrapper = SearchSecretChatWrapper(peerId: rendered.peerId)
                                     }
-                                    entries.append(.localPeer(peer, index, wrapper, peers.1[rendered.peerId] ?? .none, true))
+                                    entries.append(.localPeer(peer, index, wrapper, peers.1[rendered.peerId] ?? .none, true, true))
                                     index += 1
                                 }
                                 
@@ -551,14 +698,15 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                 
                 let location: SearchMessagesLocation
                 if groupId != .root {
-                    location = .group(groupId)
+                    location = .group(groupId: groupId, tags: nil, minDate: nil, maxDate: nil)
                     foundRemotePeers = .single(([], [], false))
                 } else if query.hasPrefix("#") || !options.contains(.chats) {
-                    location = .general
+                    location = globalTags.location
                     foundRemotePeers = .single(([], [], false))
                 } else {
-                    location = .general
-                    foundRemotePeers = .single(([], [], true)) |> then(searchPeers(account: context.account, query: query)
+                    location = globalTags.location
+                    if globalTags.isEmpty {
+                        foundRemotePeers = .single(([], [], true)) |> then(searchPeers(account: context.account, query: query)
                             |> delay(0.2, queue: prepareQueue)
                             |> map { founds -> ([FoundPeer], [FoundPeer]) in
                                 
@@ -566,10 +714,10 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                                     let first = ids[found.peer.id] == nil
                                     ids[found.peer.id] = found.peer.id
                                     return first
-                                    }, founds.1.filter { found -> Bool in
-                                        let first = ids[found.peer.id] == nil
-                                        ids[found.peer.id] = found.peer.id
-                                        return first
+                                }, founds.1.filter { found -> Bool in
+                                    let first = ids[found.peer.id] == nil
+                                    ids[found.peer.id] = found.peer.id
+                                    return first
                                 })
                                 
                             }
@@ -578,10 +726,28 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                                 return combineLatest(all.map { context.account.viewTracker.peerView($0.peer.id) |> take(1) }) |> mapToSignal { peerViews in
                                     return context.account.postbox.unreadMessageCountsView(items: all.map {.peer($0.peer.id)}) |> take(1) |> map { values in
                                         var unread:[PeerId: UnreadSearchBadge] = [:]
-                                        for peerView in peerViews {
+                                        outer: for peerView in peerViews {
                                             let isMuted = peerView.isMuted
                                             let unreadCount = values.count(for: .peer(peerView.peerId))
                                             if let unreadCount = unreadCount, unreadCount > 0 {
+                                                if let peer = peerViewMainPeer(peerView) {
+                                                    if let peer = peer as? TelegramChannel {
+                                                        inner: switch peer.participationStatus {
+                                                        case .member:
+                                                            break inner
+                                                        default:
+                                                            continue outer
+                                                        }
+                                                    }
+                                                    if let peer = peer as? TelegramGroup {
+                                                        inner: switch peer.membership {
+                                                        case .Member:
+                                                            break inner
+                                                        default:
+                                                            continue outer
+                                                        }
+                                                    }
+                                                }
                                                 unread[peerView.peerId] = isMuted ? .muted(unreadCount) : .unmuted(unreadCount)
                                             }
                                         }
@@ -593,7 +759,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                                 var local: [ChatListSearchEntry] = []
                                 var index = 1000
                                 for peer in _local {
-                                    local.append(.localPeer(peer.peer, index, nil, unread[peer.peer.id] ?? .none, true))
+                                    local.append(.localPeer(peer.peer, index, nil, unread[peer.peer.id] ?? .none, true, true))
                                     index += 1
                                 }
                                 
@@ -605,6 +771,9 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                                 }
                                 return (local, remote, false)
                             })
+                    } else {
+                        foundRemotePeers = .single(([], [], false))
+                    }
                 }
                 
                 searchMessagesState.set(nil)
@@ -613,7 +782,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                 let remoteSearch = searchMessagesState.get() |> mapToSignal { state in
                     return searchMessages(account: context.account, location: location , query: query, state: state)
                         |> delay(0.2, queue: prepareQueue)
-                        |> map { result -> ([ChatListSearchEntry], Bool, SearchMessagesState?) in
+                        |> map { result -> ([ChatListSearchEntry], Bool, SearchMessagesState?, SearchMessagesResult?) in
                             
                             var entries: [ChatListSearchEntry] = []
                             var index = 20001
@@ -622,24 +791,27 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                                 index += 1
                             }
                             
-                            return (entries, false, result.1)
+                            return (entries, false, result.1, result.0)
                     }
                 }
+                //cachedData.with { $0.cachedMessages(for: .key(query: query, tags: globalTags)) }
                 
-                
-                let foundRemoteMessages: Signal<([ChatListSearchEntry], Bool, SearchMessagesState?), NoError> = !options.contains(.messages) ? .single(([], false, nil)) : .single(([], true, nil)) |> then(remoteSearch)
+                let foundRemoteMessages: Signal<([ChatListSearchEntry], Bool, SearchMessagesState?, SearchMessagesResult?), NoError> = !options.contains(.messages) ? .single(([], false, nil, nil)) : .single(([], true, nil, nil)) |> then(remoteSearch)
                 
                 return combineLatest(queue: prepareQueue, foundLocalPeers, foundRemotePeers, foundRemoteMessages, isRevealed)
-                    |> map { localPeers, remotePeers, remoteMessages, isRevealed -> ([ChatListSearchEntry], Bool, SearchMessagesState?) in
+                    |> map { localPeers, remotePeers, remoteMessages, isRevealed -> ([ChatListSearchEntry], Bool, SearchMessagesState?, SearchMessagesResult?) in
+                        
+                        _ = cachedData.with { value -> Void in
+                            value.cacheMessages(remoteMessages.0, for: .key(query: query, tags: globalTags))
+                            value.cacheLocalPeers(remotePeers.0, for: query)
+                            value.cacheRemotePeers(remotePeers.1, for: query)
+                        }
                         
                         var entries:[ChatListSearchEntry] = []
                         if !localPeers.isEmpty || !remotePeers.0.isEmpty {
                             
-                            let peers = localPeers + remotePeers.0
+                            let peers = (localPeers + remotePeers.0)
 
-                            
-
-                            
                             entries.append(.separator(text: L10n.searchSeparatorChatsAndContacts, index: 0, state: .none))
                             if !remoteMessages.0.isEmpty {
                                 entries += peers
@@ -675,17 +847,23 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                         if entries.isEmpty && !remotePeers.2 && !remoteMessages.1 {
                             entries.append(.emptySearch)
                         }
-                        return (entries, remotePeers.2 || remoteMessages.1, remoteMessages.2)
+                        return (entries, remotePeers.2 || remoteMessages.1, remoteMessages.2, remoteMessages.3)
                     } |> map { value in
-                        return (value.0, value.1, false, value.2)
+                        return (value.0, value.1, false, value.2, value.3)
                     }
                 
             } else {
 
                 let recently = recentlySearchedPeers(postbox: context.account.postbox) |> mapToSignal { recently -> Signal<[PeerView], NoError> in
                     return combineLatest(recently.map {context.account.viewTracker.peerView($0.peer.peerId)})
-                    
-                    } |> mapToSignal { peerViews -> Signal<([PeerView], [PeerId: UnreadSearchBadge]), NoError> in
+                } |> map { peerViews -> [PeerView] in
+                    return peerViews.filter { peerView in
+                        if let group = peerViewMainPeer(peerView) as? TelegramGroup, group.migrationReference != nil {
+                            return false
+                        }
+                        return true
+                    }
+                } |> mapToSignal { peerViews -> Signal<([PeerView], [PeerId: UnreadSearchBadge]), NoError> in
                         return context.account.postbox.unreadMessageCountsView(items: peerViews.map {.peer($0.peerId)}) |> map { values in
                             
                             var unread:[PeerId: UnreadSearchBadge] = [:]
@@ -772,22 +950,22 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                     
                     return (entries.sorted(by: <), false)
                 } |> map {value in
-                    return (value.0, value.1, true, nil)
+                    return (value.0, value.1, true, nil, nil)
                 }
             }
         }
         
         
         let transition = combineLatest(queue: prepareQueue, searchItems, appearanceSignal, context.globalPeerHandler.get() |> distinctUntilChanged, pinnedPromise.get()) |> map { value, appearance, location, pinnedItems in
-            return (value.0.map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}, value.1, value.2 ? nil : location, value.2, pinnedItems, value.3)
+            return (value.0.map {AppearanceWrapperEntry(entry: $0, appearance: appearance)}, value.1, value.2 ? nil : location, value.2, pinnedItems, value.3, value.4)
         }
-        |> map { entries, loading, location, animated, pinnedItems, searchMessagesState -> (TableUpdateTransition, Bool, ChatLocation?, SearchMessagesState?) in
+        |> map { entries, loading, location, animated, pinnedItems, searchMessagesState, searchMessagesResult -> (TableUpdateTransition, Bool, ChatLocation?, SearchMessagesState?, SearchMessagesResult?) in
             let transition = prepareEntries(from: previousSearchItems.swap(entries) , to: entries, arguments: arguments, pinnedItems: pinnedItems, initialSize: atomicSize.modify { $0 }, animated: animated)
-            return (transition, loading, location, searchMessagesState)
+            return (transition, loading, location, searchMessagesState, searchMessagesResult)
         } |> deliverOnMainQueue
         
         
-        disposable.set(transition.start(next: { [weak self] (transition, loading, location, searchMessagesState) in
+        disposable.set(transition.start(next: { [weak self] (transition, loading, location, searchMessagesState, searchMessagesResult) in
             guard let `self` = self else {return}
             self.genericView.merge(with: transition)
             self.isLoading.set(.single(loading))
@@ -797,6 +975,10 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
             self.scrollupOnNextTransition = false
             _ = searchMessagesStateValue.swap(searchMessagesState)
             
+            
+            
+            self._messagesValue.set(.single((ExternalSearchMessages(messages: searchMessagesResult?.messages ?? [], count: searchMessagesResult?.totalCount ?? 0), searchMessagesResult != nil)))
+            
             if let location = location {
                 if !(self.genericView.selectedItem() is ChatListMessageRowItem) {
                     switch location {
@@ -805,6 +987,8 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
                         if let item = item {
                             _ = self.genericView.select(item: item, notify: false, byClick: false)
                         }
+                    case .replyThread:
+                        break
                     }
                 }
             } else {
@@ -844,7 +1028,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         super.viewDidAppear(animated)
         
        
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             guard let `self` = self else {return .rejected}
             
             if self.window?.firstResponder?.className != "TGUIKit.SearchTextField" {
@@ -854,7 +1038,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
             if let highlighted = self.genericView.highlightedItem() {
                 _ = self.genericView.select(item: highlighted)
                 self.closeNext = true
-
+                return .invoked
             } else if !self.marked {
                 self.genericView.cancelSelection()
                 self.genericView.selectNext()
@@ -883,7 +1067,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         removeHighlightEvents()
         
       
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             if self?.window?.firstResponder?.className != "TGUIKit.SearchTextField" {
                 return .rejected
             }
@@ -897,7 +1081,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         }, with: self, for: .UpArrow, priority: .modal)
         
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             if self?.window?.firstResponder?.className != "TGUIKit.SearchTextField" {
                 return .rejected
             }
@@ -911,11 +1095,11 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         }, with: self, for: .DownArrow, priority: .modal)
         
         
-        self.window?.set(handler: { () -> KeyHandlerResult in
+        self.window?.set(handler: { _ -> KeyHandlerResult in
             return .rejected
         }, with: self, for: .UpArrow, priority: .modal, modifierFlags: [.command])
         
-        self.window?.set(handler: { () -> KeyHandlerResult in
+        self.window?.set(handler: { _ -> KeyHandlerResult in
             return .rejected
         }, with: self, for: .DownArrow, priority: .modal, modifierFlags: [.command])
         
@@ -952,6 +1136,9 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         self.open = open
         self.options = options
         self.groupId = groupId
+        
+        var setPeerAsTag:((Peer?)->Void)? = nil
+        
         self.arguments = SearchControllerArguments(context: context, removeRecentPeerId: { peerId in
             _ = removeRecentlySearchedPeer(postbox: context.account.postbox, peerId: peerId).start()
         }, clearRecent: {
@@ -965,14 +1152,21 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
             switch type {
             case let .peer(peer, _, _):
                 open(peer.id, nil, false)
+                _ = addRecentlySearchedPeer(postbox: context.account.postbox, peerId: peer.id).start()
             case let .savedMessages(peer):
                 open(peer.id, nil, false)
             case .articles:
                 break
             }
+        }, setPeerAsTag: { peer in
+            setPeerAsTag?(peer)
         })
         super.init(frame:frame)
         self.bar = .init(height: 0)
+        
+        setPeerAsTag = { [weak self] peer in
+            self?.setPeerAsTag?(peer)
+        }
         
         globalDisposable.set(context.globalPeerHandler.get().start(next: { [weak self] peerId in
             if peerId == nil {
@@ -1004,7 +1198,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         var peer:Peer?
         var peerId:PeerId?
         var messageId:MessageId?
-        
+        var isGlobal = false
         let context = self.context
         
         if let item = item as? ChatListMessageRowItem {
@@ -1014,7 +1208,10 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         } else if let item = item as? ShortPeerRowItem {
             if let stableId = item.stableId.base as? ChatListSearchEntryStableId {
                 switch stableId {
-                case let .localPeerId(pId), let .recentSearchPeerId(pId), let .secretChat(pId), let .globalPeerId(pId):
+                case let .localPeerId(pId), let .recentSearchPeerId(pId), let .secretChat(pId):
+                    peerId = pId
+                case let .globalPeerId(pId):
+                    isGlobal = true
                     peerId = pId
                 case .savedMessages:
                     peerId = context.peerId
@@ -1102,7 +1299,7 @@ class SearchController: GenericViewController<TableView>,TableViewDelegate {
         marked = true
         
         if let peerId = peerId {
-            self.open(peerId, messageId, self.closeNext || messageId == nil)
+            self.open(peerId, messageId, self.closeNext || (messageId == nil && !isGlobal))
         }
         
     }

@@ -73,10 +73,18 @@ public extension NSFont {
     }
     
     static func avatar(_ size: FontSize) -> NSFont {
-        if let font = NSFont(name: ".SFCompactRounded-Semibold", size: size) {
-            return font
+        if #available(OSX 10.15, *) {
+            if let descriptor = NSFont.boldSystemFont(ofSize: size).fontDescriptor.withDesign(.rounded), let font = NSFont(descriptor: descriptor, size: size) {
+                return font
+            } else {
+                return .systemFont(ofSize: size, weight: .heavy)
+            }
         } else {
-            return .systemFont(ofSize: size, weight: .heavy)
+           if let font = NSFont(name: ".SFCompactRounded-Semibold", size: size) {
+                return font
+            } else {
+                return .systemFont(ofSize: size, weight: .heavy)
+            }
         }
     }
     
@@ -97,6 +105,20 @@ public extension NSFont {
         } else {
             return NSFont(name: "HelveticaNeue-Bold", size: size)!
         }
+    }
+    
+    static func digitalRound(_ size: FontSize) -> NSFont {
+        if #available(OSX 10.15, *) {
+            if let descriptor = NSFont.monospacedSystemFont(ofSize: size, weight: .bold).fontDescriptor.withDesign(.rounded), let font = NSFont(descriptor: descriptor, size: size) {
+                return font
+            } else {
+                return .systemFont(ofSize: size, weight: .heavy)
+            }
+        } else {
+            return .code(size)
+        }
+        
+        
     }
     
     static func code(_ size:FontSize) ->NSFont {

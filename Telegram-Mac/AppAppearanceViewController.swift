@@ -102,7 +102,8 @@ private let _id_theme_preview = InputDataIdentifier("_id_theme_preview")
 private let _id_theme_list = InputDataIdentifier("_id_theme_list")
 private let _id_theme_accent_list = InputDataIdentifier("_id_theme_accent_list")
 private let _id_theme_chat_mode = InputDataIdentifier("_id_theme_chat_mode")
-private let _id_theme_wallpaper = InputDataIdentifier("_id_theme_wallpaper")
+private let _id_theme_wallpaper1 = InputDataIdentifier("_id_theme_wallpaper")
+private let _id_theme_wallpaper2 = InputDataIdentifier("_id_theme_wallpaper")
 private let _id_theme_text_size = InputDataIdentifier("_id_theme_text_size")
 private let _id_theme_auto_night = InputDataIdentifier("_id_theme_auto_night")
 
@@ -114,16 +115,16 @@ private func appAppearanceEntries(appearance: Appearance, settings: ThemePalette
     
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
-    
+
     entries.append(.desc(sectionId: sectionId, index: index, text: .plain(L10n.appearanceSettingsColorThemeHeader), data: .init(viewType: .textTopItem)))
     index += 1
-    
-    entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_preview, equatable: InputDataEquatable(appearance), item: { initialSize, stableId in
+
+    entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_preview, equatable: InputDataEquatable(appearance), comparable: nil, item: { initialSize, stableId in
         return ThemePreviewRowItem(initialSize, stableId: stableId, context: arguments.context, theme: appearance.presentation, viewType: .firstItem)
     }))
-    
+
     var accentList = appearance.presentation.cloudTheme == nil || appearance.presentation.cloudTheme?.settings != nil ? appearance.presentation.colors.accentList.map { AppearanceAccentColor(accent: $0, cloudTheme: nil) } : []
-    
+
     var cloudThemes = cloudThemes
     if let cloud = appearance.presentation.cloudTheme {
         if !cloudThemes.contains(where: {$0.id == cloud.id}) {
@@ -140,15 +141,15 @@ private func appAppearanceEntries(appearance: Appearance, settings: ThemePalette
         }
         accentList.insert(contentsOf: cloudAccents, at: 0)
     }
-    
+
     cloudThemes.removeAll(where:{ $0.settings != nil })
-    
+
     struct ListEquatable : Equatable {
         let theme: TelegramPresentationTheme
         let cloudThemes:[TelegramTheme]
     }
-    entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_list, equatable: InputDataEquatable(ListEquatable(theme: appearance.presentation, cloudThemes: cloudThemes)), item: { initialSize, stableId in
-        
+    entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_list, equatable: InputDataEquatable(ListEquatable(theme: appearance.presentation, cloudThemes: cloudThemes)), comparable: nil, item: { initialSize, stableId in
+
         let selected: ThemeSource
         if let cloud = appearance.presentation.cloudTheme {
             if let _ = cloud.settings {
@@ -159,33 +160,33 @@ private func appAppearanceEntries(appearance: Appearance, settings: ThemePalette
         } else {
             selected = .local(appearance.presentation.colors, nil)
         }
-                
+
         let dayClassicCloud = settings.associated.first(where: { $0.local == dayClassicPalette.parent })?.cloud?.cloud
         let dayCloud = settings.associated.first(where: { $0.local == whitePalette.parent })?.cloud?.cloud
         let nightAccentCloud = settings.associated.first(where: { $0.local == nightAccentPalette.parent })?.cloud?.cloud
-        
+
         var locals: [LocalPaletteWithReference] = [LocalPaletteWithReference(palette: dayClassicPalette, cloud: dayClassicCloud),
                                                    LocalPaletteWithReference(palette: whitePalette, cloud: dayCloud),
                                                    LocalPaletteWithReference(palette: nightAccentPalette, cloud: nightAccentCloud),
                                                    LocalPaletteWithReference(palette: systemPalette, cloud: nil)]
-        
+
         for (i, local) in locals.enumerated() {
             if let accent = settings.accents.first(where: { $0.name == local.palette.parent }), accent.color.accent != local.palette.basicAccent {
                 locals[i] = local.withAccentColor(accent.color)
             }
         }
-        
+
         return ThemeListRowItem(initialSize, stableId: stableId, context: arguments.context, theme: appearance.presentation, selected: selected, local: locals, cloudThemes: cloudThemes, viewType: accentList.isEmpty ? .lastItem : .innerItem, togglePalette: arguments.togglePalette, menuItems: { source in
             var items:[ContextMenuItem] = []
             var cloud: TelegramTheme?
-            
+
             switch source {
             case let .cloud(c):
                 cloud = c
             case let .local(_, c):
                 cloud = c
             }
-            
+
             if let cloud = cloud {
                 if cloud.isCreator {
                     items.append(ContextMenuItem(L10n.appearanceThemeEdit, handler: {
@@ -199,20 +200,20 @@ private func appAppearanceEntries(appearance: Appearance, settings: ThemePalette
                     arguments.removeTheme(cloud)
                 }))
             }
-            
+
             return items
         })
     }))
-    
-    
+
+
     if !accentList.isEmpty {
-        
+
         struct ALEquatable : Equatable {
             let accentList: [AppearanceAccentColor]
             let theme: TelegramPresentationTheme
         }
-        
-        entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_accent_list, equatable: InputDataEquatable(ALEquatable(accentList: accentList, theme: appearance.presentation)), item: { initialSize, stableId in
+
+        entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_accent_list, equatable: InputDataEquatable(ALEquatable(accentList: accentList, theme: appearance.presentation)), comparable: nil, item: { initialSize, stableId in
             return AccentColorRowItem(initialSize, stableId: stableId, context: arguments.context, list: accentList, isNative: true, theme: appearance.presentation, viewType: .lastItem, selectAccentColor: arguments.selectAccentColor, menuItems: { accent in
                 var items:[ContextMenuItem] = []
                 if let cloud = accent.cloudTheme {
@@ -228,40 +229,41 @@ private func appAppearanceEntries(appearance: Appearance, settings: ThemePalette
         }))
         index += 1
     }
-    
+
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
     
+  
     entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_theme_chat_mode, data: InputDataGeneralData(name: L10n.appearanceSettingsBubblesMode, color: appearance.presentation.colors.text, type: .switchable(appearance.presentation.bubbled), viewType: appearance.presentation.bubbled ? .firstItem : .singleItem, action: {
         arguments.toggleBubbles(!appearance.presentation.bubbled)
     })))
     index += 1
     
     if appearance.presentation.bubbled {
-        entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_theme_wallpaper, data: InputDataGeneralData(name: L10n.generalSettingsChatBackground, color: appearance.presentation.colors.text, type: .next, viewType: .lastItem, action: arguments.selectChatBackground)))
+        entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_theme_wallpaper1, data: InputDataGeneralData(name: L10n.generalSettingsChatBackground, color: appearance.presentation.colors.text, type: .next, viewType: .lastItem, action: arguments.selectChatBackground)))
         index += 1
     }
     
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
-    
+
     entries.append(.desc(sectionId: sectionId, index: index, text: .plain(L10n.appearanceSettingsTextSizeHeader), data: .init(viewType: .textTopItem)))
     index += 1
 
-    entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_text_size, equatable: InputDataEquatable(appearance), item: { initialSize, stableId in
+    entries.append(InputDataEntry.custom(sectionId: sectionId, index: index, value: .none, identifier: _id_theme_text_size, equatable: InputDataEquatable(appearance), comparable: nil, item: { initialSize, stableId in
         let sizes:[Int32] = [11, 12, 13, 14, 15, 16, 17, 18]
         return SelectSizeRowItem(initialSize, stableId: stableId, current: Int32(appearance.presentation.fontSize), sizes: sizes, hasMarkers: true, viewType: .singleItem, selectAction: { index in
             arguments.toggleFontSize(CGFloat(sizes[index]))
         })
     }))
     index += 1
-    
+
     entries.append(.sectionId(sectionId, type: .normal))
     sectionId += 1
-    
+
     entries.append(.desc(sectionId: sectionId, index: index, text: .plain(L10n.appearanceSettingsAutoNightHeader), data: .init(viewType: .textTopItem)))
     index += 1
-    
+
     let autoNightText: String
     if autoNightSettings.systemBased {
         autoNightText = L10n.autoNightSettingsSystemBased
@@ -271,6 +273,10 @@ private func appAppearanceEntries(appearance: Appearance, settings: ThemePalette
         autoNightText = L10n.autoNightSettingsDisabled
     }
     
+    sectionId += 1
+
+    
+
     entries.append(.general(sectionId: sectionId, index: index, value: .none, error: nil, identifier: _id_theme_auto_night, data: InputDataGeneralData(name: L10n.appearanceSettingsAutoNight, color: appearance.presentation.colors.text, type: .nextContext(autoNightText), viewType: .singleItem, action: arguments.openAutoNightSettings)))
     index += 1
 
@@ -458,9 +464,16 @@ func AppAppearanceViewController(context: AccountContext, focusOnItemTag: ThemeS
                 if theme.cloudTheme != nil || theme.colors.accent != theme.colors.basicAccent {
                     items.append(SPopoverItem(L10n.appearanceReset, {
                          _ = updateThemeInteractivetly(accountManager: context.sharedContext.accountManager, f: { settings in
-                            return settings.withUpdatedToDefault(dark: settings.defaultIsDark, onlyLocal: true).updateWallpaper({ _ -> ThemeWallpaper in
+                            var settings = settings
+                            if settings.defaultIsDark {
+                                settings = settings.withUpdatedDefaultDark(DefaultTheme(local: TelegramBuiltinTheme.nightAccent, cloud: nil)).saveDefaultAccent(color: PaletteAccentColor(nightAccentPalette.accent))
+                            } else {
+                                settings = settings.withUpdatedDefaultDay(DefaultTheme(local: TelegramBuiltinTheme.dayClassic, cloud: nil)).saveDefaultAccent(color: PaletteAccentColor(dayClassicPalette.accent))
+                            }
+                            
+                            return settings.installDefaultAccent().withUpdatedCloudTheme(nil).updateWallpaper({ _ -> ThemeWallpaper in
                                 return ThemeWallpaper(wallpaper: settings.palette.wallpaper.wallpaper, associated: nil)
-                            })
+                            }).installDefaultWallpaper()
                          }).start()
                     }))
                 }
@@ -473,6 +486,13 @@ func AppAppearanceViewController(context: AccountContext, focusOnItemTag: ThemeS
         return view
         
     })
+    
+    controller.updateRightBarView = { view in
+        if let view = view as? ImageBarView {
+            view.button.set(image: theme.icons.chatActions, for: .Normal)
+            view.button.set(image: theme.icons.chatActionsActive, for: .Highlight)
+        }
+    }
     
     controller.didLoaded = { controller, _ in
         if let focusOnItemTag = focusOnItemTag {

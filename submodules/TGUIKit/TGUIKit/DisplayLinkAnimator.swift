@@ -45,6 +45,8 @@ public final class DisplayLinkAnimator {
         }, queue: .mainQueue())
         
         self.displayLink.start()
+
+        self.tick()
     }
     
     deinit {
@@ -76,6 +78,8 @@ public final class ConstantDisplayLinkAnimator {
     private var displayLink: SwiftSignalKit.Timer?
     private let update: () -> Void
     private var completed = false
+    private let fps: TimeInterval
+
     
     public var isPaused: Bool = true {
         didSet {
@@ -84,7 +88,7 @@ public final class ConstantDisplayLinkAnimator {
                     self.displayLink?.invalidate()
                 } else {
                     
-                    self.displayLink = SwiftSignalKit.Timer(timeout: 0.016, repeat: true, completion: { [weak self] in
+                    self.displayLink = SwiftSignalKit.Timer(timeout: 1 / fps, repeat: true, completion: { [weak self] in
                         self?.tick()
                     }, queue: .mainQueue())
                     
@@ -94,8 +98,9 @@ public final class ConstantDisplayLinkAnimator {
         }
     }
     
-    public init(update: @escaping () -> Void) {
+    public init(update: @escaping () -> Void, fps: TimeInterval = 60) {
         self.update = update
+        self.fps = fps
     }
     
     deinit {

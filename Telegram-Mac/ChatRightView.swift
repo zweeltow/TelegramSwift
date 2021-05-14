@@ -12,12 +12,12 @@ import TelegramCore
 import SyncCore
 
 
+
 class ChatRightView: View {
     
     private var stateView:ImageView?
     private var readImageView:ImageView?
     private var sendingView:SendingClockProgress?
-    private var channelsViewsImage:ImageView?
 
     private weak var item:ChatRowItem?
     
@@ -30,6 +30,9 @@ class ChatRightView: View {
     func set(item:ChatRowItem, animated:Bool) {
         self.item = item
         self.toolTip = item.fullDate
+        item.updateTooltip = { [weak self] value in
+            self?.toolTip = value
+        }
         if !item.isIncoming || item.isUnsent || item.isFailed
             && !item.chatInteraction.isLogInteraction {
             if item.isUnsent {
@@ -61,7 +64,7 @@ class ChatRightView: View {
                         self.addSubview(stateView!)
                     }
                     
-                    if item.isRead && !item.isFailed && !item.isStorage {
+                    if item.isRead && !item.isFailed && !item.hasSource {
                         if readImageView == nil {
                             readImageView = ImageView()
                             addSubview(readImageView!)
@@ -85,7 +88,7 @@ class ChatRightView: View {
             sendingView?.removeFromSuperview()
             sendingView = nil
         }
-        readImageView?.image = theme.chat.readStateIcon(item)
+        readImageView?.image = item.presentation.chat.readStateIcon(item)
         readImageView?.sizeToFit()
         sendingView?.set(item: item)
         self.needsLayout = true
@@ -152,17 +155,39 @@ class ChatRightView: View {
                     editLabel.1.draw(NSMakeRect(frame.width - date.0.size.width - editLabel.0.size.width - item.stateOverlayAdditionCorner - (isReversed || (stateView != nil) ? 23 : 5), item.isBubbled ? (item.isStateOverlayLayout ? 2 : 1) : 0, editLabel.0.size.width, editLabel.0.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
                 }
             }
+            
+            var viewsOffset: CGFloat = 0
+            
+            if let likes = item.likes {
+                viewsOffset += likes.0.size.width + 18
+                let icon = item.presentation.chat.likedIcon(item)
+                ctx.draw(icon, in: NSMakeRect(likes.0.size.width + 2 + item.stateOverlayAdditionCorner, item.isBubbled ? (item.isStateOverlayLayout ? 1 : 0) : 0, icon.backingSize.width, icon.backingSize.height))
+                likes.1.draw(NSMakeRect(item.stateOverlayAdditionCorner, item.isBubbled ? (item.isStateOverlayLayout ? 2 : 1) : 0, likes.0.size.width, likes.0.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
+
+            }
+            if item.isPinned {
+                let icon = item.presentation.chat.messagePinnedIcon(item)
+                ctx.draw(icon, in: NSMakeRect(viewsOffset + (item.isStateOverlayLayout ? 4 : 0), item.isBubbled ? (item.isStateOverlayLayout ? 3 : 2) : 2, icon.backingSize.width, icon.backingSize.height))
+                viewsOffset += icon.backingSize.width + (item.isStateOverlayLayout ? 4 : 4)
+            }
+            
             if let channelViews = item.channelViews {
-                let icon = theme.chat.channelViewsIcon(item)
-                ctx.draw(icon, in: NSMakeRect(channelViews.0.size.width + 2 + item.stateOverlayAdditionCorner, item.isBubbled ? (item.isStateOverlayLayout ? 1 : 0) : 0, icon.backingSize.width, icon.backingSize.height))
+                let icon = item.presentation.chat.channelViewsIcon(item)
+                ctx.draw(icon, in: NSMakeRect(channelViews.0.size.width + 2 + item.stateOverlayAdditionCorner + viewsOffset, item.isBubbled ? (item.isStateOverlayLayout ? 1 : 0) : 0, icon.backingSize.width, icon.backingSize.height))
                 
-                channelViews.1.draw(NSMakeRect(item.stateOverlayAdditionCorner, item.isBubbled ? (item.isStateOverlayLayout ? 2 : 1) : 0, channelViews.0.size.width, channelViews.0.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
+                channelViews.1.draw(NSMakeRect(item.stateOverlayAdditionCorner + viewsOffset, item.isBubbled ? (item.isStateOverlayLayout ? 2 : 1) : 0, channelViews.0.size.width, channelViews.0.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
                 
                 
                 if let postAuthor = item.postAuthor {
-                    postAuthor.1.draw(NSMakeRect(icon.backingSize.width + channelViews.0.size.width + 8 + item.stateOverlayAdditionCorner, item.isBubbled ? (item.isStateOverlayLayout ? 2 : 1) : 0, postAuthor.0.size.width, postAuthor.0.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
+                    postAuthor.1.draw(NSMakeRect(icon.backingSize.width + channelViews.0.size.width + 8 + item.stateOverlayAdditionCorner + viewsOffset, item.isBubbled ? (item.isStateOverlayLayout ? 2 : 1) : 0, postAuthor.0.size.width, postAuthor.0.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
+                    viewsOffset += postAuthor.0.size.width + 8
                 }
-                
+                viewsOffset += channelViews.0.size.width + 22
+            }
+            if let replyCount = item.replyCount {
+                let icon = item.presentation.chat.repliesCountIcon(item)
+                ctx.draw(icon, in: NSMakeRect(replyCount.0.size.width + 2 + item.stateOverlayAdditionCorner + viewsOffset, item.isBubbled ? (item.isStateOverlayLayout ? 3 : 2) : 2, icon.backingSize.width, icon.backingSize.height))
+                replyCount.1.draw(NSMakeRect(item.stateOverlayAdditionCorner + viewsOffset, item.isBubbled ? (item.isStateOverlayLayout ? 2 : 1) : 0, replyCount.0.size.width, replyCount.0.size.height), in: ctx, backingScaleFactor: backingScaleFactor, backgroundColor: backgroundColor)
             }
             
         }

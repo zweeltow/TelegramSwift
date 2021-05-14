@@ -15,11 +15,39 @@ open class TableRowView: NSTableRowView, CALayerDelegate {
     
     private var animatedView: RowAnimateView?
 
+    private let longDisposable = MetaDisposable()
+    
     public internal(set) var isResorting: Bool = false {
         didSet {
             updateIsResorting()
         }
     }
+    
+    var dynamicContentStateForRestore:Bool? = nil
+    var interactionStateForRestore:Bool? = nil
+    
+    public var isDynamicContentLocked:Bool = false {
+        didSet {
+            if isDynamicContentLocked != oldValue {
+                viewDidUpdatedDynamicContent()
+            }
+        }
+    }
+    public var userInteractionEnabled:Bool = true {
+        didSet {
+            if userInteractionEnabled != oldValue {
+                viewDidUpdatedInteractivity()
+            }
+        }
+    }
+    
+    open func viewDidUpdatedInteractivity() {
+        
+    }
+    open func viewDidUpdatedDynamicContent() {
+        
+    }
+    
     
     open private(set) weak var item:TableRowItem?
     private let menuDisposable = MetaDisposable()
@@ -164,7 +192,26 @@ open class TableRowView: NSTableRowView, CALayerDelegate {
     
     open override func pressureChange(with event: NSEvent) {
         super.pressureChange(with: event)
+        
+        
+        if event.stage >= 1 && event.stage != lastPressureEventStage {
+            longDisposable.set(delaySignal(0.25).start(completed: { [weak self] in
+                if let strongSelf = self {
+                    if NSEvent.pressedMouseButtons & (1 << 0) != 0 {
+                        if strongSelf.window?.mouseLocationOutsideOfEventStream == event.locationInWindow {
+                            strongSelf.forceClick(in: strongSelf.convert(event.locationInWindow, from: nil))
+                        }
+                    }
+                }
+            }))
+        }
+        
+        if event.stage < 1 {
+            longDisposable.set(nil)
+        }
+        
         if event.stage == 2 && lastPressureEventStage < 2 {
+            longDisposable.set(nil)
             forceClick(in: convert(event.locationInWindow, from: nil))
         }
         lastPressureEventStage = event.stage
@@ -202,8 +249,13 @@ open class TableRowView: NSTableRowView, CALayerDelegate {
             menuDisposable.set((item.menuItems(in: convertWindowPointToContent(event.locationInWindow)) |> deliverOnMainQueue |> take(1)).start(next: { [weak self] items in
                 if let strongSelf = self {
                     let menu = ContextMenu()
-                    
-                    
+
+                    if let appearance = self?.rowAppearance {
+                        if menu.responds(to: Selector("appearance")) {
+                            menu.appearance = appearance
+                        }
+                    }
+
 //                    presntContextMenu(for: event, items: items.compactMap({ item in
 //                        if !(item is ContextSeparatorItem) {
 //                            return SPopoverItem(item.title, item.handler)
@@ -230,8 +282,7 @@ open class TableRowView: NSTableRowView, CALayerDelegate {
                         menu.addItem(item)
                     }
                     
-                    menu.delegate = menu
-                    
+
                     RunLoop.current.add(Timer.scheduledTimer(timeInterval: 0, target: strongSelf, selector: #selector(strongSelf.openPanelInRunLoop), userInfo: (event, menu), repeats: false), forMode: RunLoop.Mode.modalPanel)
 
                     
@@ -266,10 +317,12 @@ open class TableRowView: NSTableRowView, CALayerDelegate {
     
     open func onShowContextMenu() ->Void {
         self.layer?.setNeedsDisplay()
+        updateColors()
     }
     
     open func onCloseContextMenu() ->Void {
         self.layer?.setNeedsDisplay()
+        updateColors()
     }
     
     required public init?(coder: NSCoder) {
@@ -348,6 +401,7 @@ open class TableRowView: NSTableRowView, CALayerDelegate {
     }
     
     deinit {
+        longDisposable.dispose()
         menuDisposable.dispose()
     }
     
@@ -418,19 +472,23 @@ open class TableRowView: NSTableRowView, CALayerDelegate {
         
     }
     
-    public func change(pos position: NSPoint, animated: Bool, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) -> Void  {
+    open func change(pos position: NSPoint, animated: Bool, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) -> Void  {
         super._change(pos: position, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction, completion: completion)
     }
     
-    public func change(size: NSSize, animated: Bool, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) {
+    open func change(size: NSSize, animated: Bool, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) {
         super._change(size: size, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction, completion: completion)
     }
-    public func change(opacity to: CGFloat, animated: Bool = true, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) {
+    open func change(opacity to: CGFloat, animated: Bool = true, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) {
         super._change(opacity: to, animated: animated, save, removeOnCompletion: removeOnCompletion, duration: duration, timingFunction: timingFunction, completion: completion)
     }
     
     open func mouseInside() -> Bool {
         return super._mouseInside()
+    }
+    
+    open var rowAppearance: NSAppearance? {
+        return self.appearance
     }
     
 }

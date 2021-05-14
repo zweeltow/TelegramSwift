@@ -1,4 +1,4 @@
-//
+ //
 //  ChatInterfaceStateContextQueries.swift
 //  TelegramMac
 //
@@ -15,16 +15,21 @@ import Postbox
 
 func contextQueryResultStateForChatInterfacePresentationState(_ chatPresentationInterfaceState: ChatPresentationInterfaceState, context: AccountContext, currentQuery: ChatPresentationInputQuery?) -> (ChatPresentationInputQuery?, Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError>)? {
     let inputQuery = chatPresentationInterfaceState.inputContext
-    if inputQuery != .none {
-        if inputQuery == currentQuery {
-            return nil
+    switch chatPresentationInterfaceState.state {
+    case .normal, .editing:
+        if inputQuery != .none {
+            if inputQuery == currentQuery {
+                return nil
+            } else {
+                return makeInlineResult(inputQuery, chatPresentationInterfaceState: chatPresentationInterfaceState, currentQuery: currentQuery, context: context)
+            }
         } else {
-            return makeInlineResult(inputQuery, chatPresentationInterfaceState: chatPresentationInterfaceState, currentQuery: currentQuery, context: context)
-            
+            return (nil, .single({ _ in return nil }))
         }
-    } else {
+    default:
         return (nil, .single({ _ in return nil }))
     }
+    
 }
 
 private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPresentationInterfaceState: ChatPresentationInterfaceState, currentQuery: ChatPresentationInputQuery?,  context: AccountContext)  -> (ChatPresentationInputQuery?, Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError>)?  {
@@ -140,7 +145,9 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
                 inlineSignal = recentlyUsedInlineBots(postbox: context.account.postbox) |> take(1)
             }
             
-            let participants = combineLatest(inlineSignal, searchPeerMembers(context: context, peerId: global.id, query: query) |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
+            let members: Signal<[Peer], NoError> = searchPeerMembers(context: context, peerId: global.id, chatLocation: chatPresentationInterfaceState.chatLocation, query: query)
+            
+            let participants = combineLatest(inlineSignal, members |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
                 return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(global.id), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
                     let latestIds:[PeerId] = view.0.entries.reversed().compactMap({ entry in
                         if entry.message.media.first is TelegramMediaAction {
@@ -246,7 +253,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
         }
         
         var delayRequest = true
-        var signal: Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError> = .complete()
+        var signal: Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError> = .single({ _ in return nil })
         if let currentQuery = currentQuery {
             switch currentQuery {
             case let .contextRequest(currentAddressName, currentContextQuery) where currentAddressName == addressName:
@@ -276,7 +283,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
                     let contextResults = requestChatContextResults(account: context.account, botId: user.id, peerId: chatPeer.id, query: query, offset: "")
                         |> map { results -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
                             return { _ in
-                                return .contextRequestResult(user, results)
+                                return .contextRequestResult(user, results?.results)
                             }
                     }
                     
@@ -308,7 +315,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
                         let normalizedQuery = query.lowercased()
                         
                         if let global = chatPresentationInterfaceState.peer {
-                            return searchPeerMembers(context: context, peerId: global.id, query: normalizedQuery) |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
+                            return searchPeerMembers(context: context, peerId: global.id, chatLocation: chatPresentationInterfaceState.chatLocation, query: normalizedQuery) |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
                                 return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(global.id), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
                                     let latestIds:[PeerId] = view.0.entries.reversed().compactMap({ entry in
                                         if entry.message.media.first is TelegramMediaAction {
@@ -371,7 +378,7 @@ enum ContextQueryForSearchMentionFilter {
 }
 
 
-func chatContextQueryForSearchMention(peer: Peer, _ inputQuery: ChatPresentationInputQuery, currentQuery: ChatPresentationInputQuery?, context: AccountContext, filter: ContextQueryForSearchMentionFilter = .plain(includeNameless: true, includeInlineBots: false))  -> (ChatPresentationInputQuery?, Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError>)?  {
+func chatContextQueryForSearchMention(chatLocations: [ChatLocation], _ inputQuery: ChatPresentationInputQuery, currentQuery: ChatPresentationInputQuery?, context: AccountContext, filter: ContextQueryForSearchMentionFilter = .plain(includeNameless: true, includeInlineBots: false))  -> (ChatPresentationInputQuery?, Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError>)?  {
     switch inputQuery {
     case let .mention(query: query, includeRecent: _):
         let normalizedQuery = query.lowercased()
@@ -386,77 +393,98 @@ func chatContextQueryForSearchMention(peer: Peer, _ inputQuery: ChatPresentation
             }
         }
         
-        let participants = searchPeerMembers(context: context, peerId: peer.id, query: normalizedQuery) |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
-            return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(peer.id), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
-                let latestIds:[PeerId] = view.0.entries.reversed().compactMap({ entry in
-                    if entry.message.media.first is TelegramMediaAction {
-                        return nil
-                    }
-                    return entry.message.author?.id
-                })
-                
-                var sorted = participants.sorted{ lhs, rhs in
-                    let lhsIndex = latestIds.firstIndex(where: {$0 == lhs.id})
-                    let rhsIndex = latestIds.firstIndex(where: {$0 == rhs.id})
-                    if let lhsIndex = lhsIndex, let rhsIndex = rhsIndex  {
-                        return lhsIndex < rhsIndex
-                    } else if lhsIndex == nil && rhsIndex != nil {
-                        return false
-                    } else if lhsIndex != nil && rhsIndex == nil {
-                        return true
-                    } else {
-                        return lhs.displayTitle < rhs.displayTitle
-                    }
+        let participants: Signal<[Peer], NoError> = combineLatest(chatLocations.map { chatLocation in
+            searchPeerMembers(context: context, peerId: chatLocation.peerId, chatLocation: chatLocation, query: normalizedQuery) |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
+                return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(chatLocation.peerId), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
+                    let latestIds:[PeerId] = view.0.entries.reversed().compactMap({ entry in
+                        if entry.message.media.first is TelegramMediaAction {
+                            return nil
+                        }
+                        return entry.message.author?.id
+                    })
                     
-                }
-                
-                if let index = sorted.firstIndex(where: {$0.id == context.peerId}) {
-                    sorted.move(at: index, to: 0)
-                }
-                
-                return sorted
-            }
-            
-        } |> map { participants -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
-                let filteredParticipants = participants.filter { peer in
-                    
-                    switch filter {
-                    case let .plain(includeNameless, includeInlineBots):
-                        if !includeNameless, peer.addressName == nil || peer.addressName!.isEmpty {
+                    var sorted = participants.sorted{ lhs, rhs in
+                        let lhsIndex = latestIds.firstIndex(where: {$0 == lhs.id})
+                        let rhsIndex = latestIds.firstIndex(where: {$0 == rhs.id})
+                        if let lhsIndex = lhsIndex, let rhsIndex = rhsIndex  {
+                            return lhsIndex < rhsIndex
+                        } else if lhsIndex == nil && rhsIndex != nil {
                             return false
-                        }
-                        if !includeInlineBots, let peer = peer as? TelegramUser, peer.botInfo?.inlinePlaceholder != nil {
-                            return false
-                        }
-                    case let .filterSelf(includeNameless, includeInlineBots):
-                        if !includeNameless, peer.addressName == nil || peer.addressName!.isEmpty {
-                            return false
-                        }
-                        if peer.id == context.peerId {
-                            return false
+                        } else if lhsIndex != nil && rhsIndex == nil {
+                            return true
+                        } else {
+                            return lhs.displayTitle < rhs.displayTitle
                         }
                         
-                        if !includeInlineBots, let peer = peer as? TelegramUser, peer.botInfo?.inlinePlaceholder != nil {
-                            return false
-                        }
-                    }
-                    if peer.displayTitle == L10n.peerDeletedUser {
-                        return false
-                    }
-                    if peer.indexName.matchesByTokens(normalizedQuery) {
-                        return true
-                    }
-                    if let addressName = peer.addressName, addressName.lowercased().hasPrefix(normalizedQuery) {
-                        return true
                     }
                     
-                    return peer.addressName == nil && normalizedQuery.isEmpty
+                    if let index = sorted.firstIndex(where: {$0.id == context.peerId}) {
+                        sorted.move(at: index, to: 0)
+                    }
+                    
+                    return sorted
                 }
                 
-                return { _ in return .mentions(filteredParticipants) }
+            }
+        }) |> map { values in
+            var result:[Peer] = []
+            for value in values {
+                result.append(contentsOf: value)
+            }
+            return uniquePeers(from: result)
         }
         
-        return (inputQuery, signal |> then(participants))
+        let peers = combineLatest(chatLocations.map { context.account.postbox.loadedPeerWithId($0.peerId) })
+        
+        let result = combineLatest(participants, peers) |> map { participants, peers -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
+            
+            var participants = participants
+            
+            for peer in peers {
+                if peer.isSupergroup {
+                    participants.append(peer)
+                }
+            }
+            
+            let filteredParticipants = participants.filter { peer in
+                
+                switch filter {
+                case let .plain(includeNameless, includeInlineBots):
+                    if !includeNameless, peer.addressName == nil || peer.addressName!.isEmpty {
+                        return false
+                    }
+                    if !includeInlineBots, let peer = peer as? TelegramUser, peer.botInfo?.inlinePlaceholder != nil {
+                        return false
+                    }
+                case let .filterSelf(includeNameless, includeInlineBots):
+                    if !includeNameless, peer.addressName == nil || peer.addressName!.isEmpty {
+                        return false
+                    }
+                    if peer.id == context.peerId {
+                        return false
+                    }
+                    
+                    if !includeInlineBots, let peer = peer as? TelegramUser, peer.botInfo?.inlinePlaceholder != nil {
+                        return false
+                    }
+                }
+                if peer.displayTitle == L10n.peerDeletedUser {
+                    return false
+                }
+                if peer.indexName.matchesByTokens(normalizedQuery) {
+                    return true
+                }
+                if let addressName = peer.addressName, addressName.lowercased().hasPrefix(normalizedQuery) {
+                    return true
+                }
+                
+                return peer.addressName == nil && normalizedQuery.isEmpty
+            }
+            
+            return { _ in return .mentions(filteredParticipants) }
+        }
+        
+        return (inputQuery, signal |> then(result))
     case let .emoji(query, firstWord):
         if !query.isEmpty {
             let signal = context.sharedContext.inputSource.searchEmoji(postbox: context.account.postbox, sharedContext: context.sharedContext, query: query, completeMatch: query.length < 3, checkPrediction: firstWord) |> delay(firstWord ? 0.3 : 0, queue: .concurrentDefaultQueue())
@@ -502,24 +530,43 @@ func chatContextQueryForSearchMention(peer: Peer, _ inputQuery: ChatPresentation
 
 private let dataDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType([.link]).rawValue)
 
-func urlPreviewStateForChatInterfacePresentationState(_ chatPresentationInterfaceState: ChatPresentationInterfaceState, context: AccountContext, currentQuery: String?) -> Signal<(String?, Signal<(TelegramMediaWebpage?) -> TelegramMediaWebpage?, NoError>)?, NoError> {
+ func urlPreviewStateForChatInterfacePresentationState(_ chatPresentationInterfaceState: ChatPresentationInterfaceState, context: AccountContext, currentQuery: String?, disableEditingPreview: ((String)->Void)? = nil) -> Signal<(String?, Signal<(TelegramMediaWebpage?) -> TelegramMediaWebpage?, NoError>)?, NoError> {
     
     return Signal { subscriber in
+        
+        var detector = dataDetector
+
         
         if chatPresentationInterfaceState.state == .editing, let media = chatPresentationInterfaceState.interfaceState.editState?.message.media.first {
             if media is TelegramMediaFile || media is TelegramMediaImage {
                 subscriber.putNext((nil, .single({ _ in return nil })))
                 subscriber.putCompletion()
+                detector = nil
             }
         }
-        
         
         if let peer = chatPresentationInterfaceState.peer, peer.webUrlRestricted {
             subscriber.putNext((nil, .single({ _ in return nil })))
             subscriber.putCompletion()
+            detector = nil
         }
         
-        if let dataDetector = dataDetector {
+        if chatPresentationInterfaceState.state == .editing, let media = chatPresentationInterfaceState.interfaceState.editState?.message.media.first {
+            if let media = media as? TelegramMediaWebpage {
+                let url: String?
+                switch media.content {
+                case let .Loaded(content):
+                    url = content.url
+                case let .Pending(content):
+                    url = content.1
+                }
+                subscriber.putNext((url, .single({ _ in return media })))
+                subscriber.putCompletion()
+                detector = nil
+            }
+        }
+        
+        if let dataDetector = detector {
             
             var detectedUrl: String?
 
@@ -548,27 +595,85 @@ func urlPreviewStateForChatInterfacePresentationState(_ chatPresentationInterfac
                 }
             }
             
+            if let disableEditingPreview = disableEditingPreview {
+                if let editState = chatPresentationInterfaceState.interfaceState.editState {
+                    if editState.message.media.isEmpty, let detectedUrl = detectedUrl  {
+                        disableEditingPreview(detectedUrl)
+                        subscriber.putNext((nil, .single({ _ in return nil })))
+                        subscriber.putCompletion()
+                        return EmptyDisposable
+                    }
+                }
+            }
+            
             if detectedUrl != currentQuery {
                 if let detectedUrl = detectedUrl {
                     let link = inApp(for: detectedUrl.nsstring, context: context, peerId: nil, openInfo: { _, _, _, _ in }, hashtag: { _ in }, command: { _ in }, applyProxy: { _ in }, confirm: false)
-                    switch link {
-                    case let .external(detectedUrl, _):
-                        subscriber.putNext((detectedUrl, webpagePreview(account: context.account, url: detectedUrl) |> map { value in
-                            return { _ in return value }
-                        }))
-                    case let .followResolvedName(_, username, _, _, _, _):
-                        if username.hasPrefix("_private_") {
-                            subscriber.putNext((nil, .single({ _ in return nil })))
-                            subscriber.putCompletion()
-                        } else {
+                    
+                    
+                    let invoke:(inAppLink)->Void = { link in
+                        switch link {
+                        case let .external(detectedUrl, _):
                             subscriber.putNext((detectedUrl, webpagePreview(account: context.account, url: detectedUrl) |> map { value in
                                 return { _ in return value }
-                            }))
+                                }))
+                        case let .followResolvedName(_, username, _, _, _, _):
+                            if username.hasPrefix("_private_") {
+                                subscriber.putNext((nil, .single({ _ in return nil })))
+                                subscriber.putCompletion()
+                            } else {
+                                subscriber.putNext((detectedUrl, webpagePreview(account: context.account, url: detectedUrl) |> map { value in
+                                    return { _ in return value }
+                                    }))
+                            }
+                        default:
+                            subscriber.putNext((nil, .single({ _ in return nil })))
+                            subscriber.putCompletion()
                         }
-                    default:
-                        subscriber.putNext((nil, .single({ _ in return nil })))
-                        subscriber.putCompletion()
                     }
+                    
+                    if chatPresentationInterfaceState.chatLocation.peerId.namespace == Namespaces.Peer.SecretChat {
+                        let value = FastSettings.isSecretChatWebPreviewAvailable(for: context.account.id.int64)
+                        
+                        if let value = value {
+                            if !value {
+                                subscriber.putNext((nil, .single({ _ in return nil })))
+                                subscriber.putCompletion()
+                                return EmptyDisposable
+                            } else {
+                                invoke(link)
+                            }
+                        } else {
+                            
+                            var canLoad: Bool = false
+                            switch link {
+                            case .external:
+                                canLoad = true
+                            case let .followResolvedName(_, username, _, _, _, _):
+                                if !username.hasPrefix("_private_") {
+                                    canLoad = true
+                                }
+                            default:
+                                canLoad = false
+                            }
+                            
+                            if canLoad {
+                               confirm(for: context.window, header: L10n.chatSecretChatPreviewHeader, information: L10n.chatSecretChatPreviewText, okTitle: L10n.chatSecretChatPreviewOK, cancelTitle: L10n.chatSecretChatPreviewNO, successHandler: { result in
+                                    FastSettings.setSecretChatWebPreviewAvailable(for: context.account.id.int64, value: true)
+                                    invoke(link)
+                               }, cancelHandler: {
+                                    FastSettings.setSecretChatWebPreviewAvailable(for: context.account.id.int64, value: false)
+                                    subscriber.putNext((nil, .single({ _ in return nil })))
+                                    subscriber.putCompletion()
+                               })
+                            }
+                            
+                        }
+                    } else {
+                        invoke(link)
+                    }
+                    
+                    
                 } else {
                     subscriber.putNext((nil, .single({ _ in return nil })))
                     subscriber.putCompletion()

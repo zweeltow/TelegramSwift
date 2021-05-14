@@ -15,10 +15,13 @@ public enum ChartItemType {
     case lines
     case twoAxis
     case pie
+    case area
     case bars
     case step
     case twoAxisStep
     case hourlyStep
+    case twoAxisHourlyStep
+    case twoAxis5MinStep
 }
 
 
@@ -26,7 +29,7 @@ public enum ChartItemType {
 class StatisticRowItem: GeneralRowItem {
     let collection: ChartsCollection
     let controller: BaseChartController
-    init(_ initialSize: NSSize, stableId: AnyHashable, collection: ChartsCollection, viewType: GeneralViewType, type: ChartItemType, getDetailsData: @escaping (Date, @escaping (String?) -> Void) -> Void) {
+    init(_ initialSize: NSSize, stableId: AnyHashable, context: AccountContext, collection: ChartsCollection, viewType: GeneralViewType, type: ChartItemType, getDetailsData: @escaping (Date, @escaping (String?) -> Void) -> Void) {
         self.collection = collection
         
         let controller: BaseChartController
@@ -39,6 +42,8 @@ class StatisticRowItem: GeneralRowItem {
             controller.isZoomable = false
         case .pie:
             controller = PercentPieChartController(chartsCollection: collection)
+        case .area:
+            controller = PercentPieChartController(chartsCollection: collection, initiallyZoomed: false)
         case .bars:
             controller = StackedBarsChartController(chartsCollection: collection)
             controller.isZoomable = false
@@ -49,21 +54,52 @@ class StatisticRowItem: GeneralRowItem {
         case .hourlyStep:
             controller = StepBarsChartController(chartsCollection: collection, hourly: true)
             controller.isZoomable = false
+        case .twoAxisHourlyStep:
+            let stepController = TwoAxisStepBarsChartController(chartsCollection: collection)
+            stepController.hourly = true
+            controller = stepController
+            controller.isZoomable = false
+        case .twoAxis5MinStep:
+            let stepController = TwoAxisStepBarsChartController(chartsCollection: collection)
+            stepController.min5 = true
+            controller = stepController
+            controller.isZoomable = false
         }
         
+        
+        
         controller.getDetailsData = { date, completion in
-            getDetailsData(date, { detailsData in
-                if let detailsData = detailsData, let data = detailsData.data(using: .utf8) {
-                    ChartsDataManager.readChart(data: data, extraCopiesCount: 0, sync: true, success: { collection in
-                        Queue.mainQueue().async {
-                            completion(collection)
+            let signal:Signal<ChartsCollection?, NoError> = Signal { subscriber -> Disposable in
+                var cancelled: Bool = false
+                getDetailsData(date, { detailsData in
+                    if let detailsData = detailsData, let data = detailsData.data(using: .utf8), !cancelled {
+                        ChartsDataManager.readChart(data: data, extraCopiesCount: 0, sync: true, success: { collection in
+                            if !cancelled {
+                                subscriber.putNext(collection)
+                                subscriber.putCompletion()
+                            }
+                           
+                        }) { error in
+                            if !cancelled {
+                                subscriber.putNext(nil)
+                                subscriber.putCompletion()
+                            }
                         }
-                    }) { error in
-                        completion(nil)
+                    } else {
+                        if !cancelled {
+                            subscriber.putNext(nil)
+                            subscriber.putCompletion()
+                        }
                     }
-                } else {
-                    completion(nil)
+                })
+                
+                return ActionDisposable {
+                    cancelled = true
                 }
+            }
+            
+            _ = showModalProgress(signal: signal, for: context.window).start(next: { collection in
+                completion(collection)
             })
         }
         self.controller = controller
@@ -102,8 +138,18 @@ class StatisticRowView: TableRowView {
         
     }
     
+    override func updateMouse() {
+        super.updateMouse()
+        chartView.updateMouse()
+    }
+    
+    private var chartTheme: ChartTheme {
+        let chartTheme = (theme.colors.isDark ? ChartTheme.defaultNightTheme : ChartTheme.defaultDayTheme)
+        return ChartTheme(chartTitleColor: theme.colors.text, actionButtonColor: theme.colors.accent, chartBackgroundColor: theme.colors.background, chartLabelsColor: theme.colors.grayText, chartHelperLinesColor: chartTheme.chartHelperLinesColor, chartStrongLinesColor: chartTheme.chartStrongLinesColor, barChartStrongLinesColor: chartTheme.barChartStrongLinesColor, chartDetailsTextColor: theme.colors.grayText, chartDetailsArrowColor: theme.colors.grayText, chartDetailsViewColor: theme.colors.grayBackground, rangeViewFrameColor: chartTheme.rangeViewFrameColor, rangeViewTintColor: theme.colors.grayForeground.withAlphaComponent(0.4), rangeViewMarkerColor: chartTheme.rangeViewTintColor, rangeCropImage: chartTheme.rangeCropImage)
+    }
+    
     override var backdorColor: NSColor {
-        return (theme.colors.isDark ? ChartTheme.defaultNightTheme : ChartTheme.defaultDayTheme).chartBackgroundColor
+        return chartTheme.chartBackgroundColor
     }
     
     override func updateColors() {
@@ -139,7 +185,7 @@ class StatisticRowView: TableRowView {
         
         chartView.setup(controller: item.controller, title: "Test")
 
-        chartView.apply(theme: theme.colors.isDark ? .defaultNightTheme : .defaultDayTheme, animated: false)
+        chartView.apply(theme: chartTheme, strings: ChartStrings(zoomOut: L10n.graphZoomOut, total: L10n.graphTotal), animated: false)
         
         if first {
             chartView.layer?.animateAlpha(from: 0, to: 1, duration: 0.25)

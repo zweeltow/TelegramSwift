@@ -28,6 +28,16 @@
 
 @implementation ObjcUtils
 
+    
++(NSCursor * __nullable)windowResizeNorthWestSouthEastCursor {
+    NSCursor *cursor = [[NSCursor class] performSelector:@selector(_windowResizeNorthWestSouthEastCursor)];
+    return cursor;
+}
+  
++(NSCursor * __nullable)windowResizeNorthEastSouthWestCursor {
+    NSCursor *cursor = [[NSCursor class] performSelector:@selector(_windowResizeNorthEastSouthWestCursor)];
+    return cursor;
+}
 
 + (NSData *)dataFromHexString:(NSString *)string
 {
@@ -49,7 +59,7 @@
     return data;
 }
 
-+ (NSArray *)textCheckingResultsForText:(NSString *)text highlightMentionsAndTags:(bool)highlightMentionsAndTags highlightCommands:(bool)highlightCommands dotInMention:(bool)dotInMention
++ (NSArray *)textCheckingResultsForText:(NSString *)text highlightMentions:(bool)highlightMentions highlightTags:(bool)highlightTags highlightCommands:(bool)highlightCommands dotInMention:(bool)dotInMention
 {
     bool containsSomething = false;
     
@@ -68,7 +78,12 @@
     {
         unichar c = characterAtIndexImp(text, sel, i);
         
-        if (highlightMentionsAndTags && (c == '@' || c == '#'))
+        if (highlightMentions && (c == '@'))
+        {
+            containsSomething = true;
+            break;
+        }
+        if (highlightTags && (c == '#'))
         {
             containsSomething = true;
             break;
@@ -149,7 +164,7 @@
                  @try {
                      NSTextCheckingType type = [match resultType];
                      NSString *scheme = [[[match URL] scheme] lowercaseString];
-                     if ((type == NSTextCheckingTypeLink || type == NSTextCheckingTypePhoneNumber) && ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"ftp"] || scheme == nil))
+                     if ((type == NSTextCheckingTypeLink || type == NSTextCheckingTypePhoneNumber) && ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"] || [scheme isEqualToString:@"ftp"] || [scheme isEqualToString:@"tg"] || [scheme isEqualToString:@"ton"] || scheme == nil))
                      {
                          [results addObject:[NSValue valueWithRange:match.range]];
                      }
@@ -170,7 +185,7 @@
                           characterSet = [NSCharacterSet alphanumericCharacterSet];
                       });
         
-        if (containsSomething && (highlightMentionsAndTags || highlightCommands))
+        if (containsSomething && (highlightMentions || highlightTags || highlightCommands))
         {
             int mentionStart = -1;
             int hashtagStart = -1;
@@ -180,7 +195,7 @@
             for (int i = 0; i < length; i++)
             {
                 unichar c = characterAtIndexImp(text, sel, i);
-                if (highlightMentionsAndTags && commandStart == -1)
+                if ((highlightMentions || highlightTags) && commandStart == -1)
                 {
                     if (mentionStart != -1)
                     {
@@ -583,7 +598,7 @@
         
         //        MTLog(@"viewC.className %@ %@", viewC.className, className);
         
-        if([viewC.className isEqualToString:className]) {
+        if([viewC respondsToSelector:@selector(className)] && [viewC.className isEqualToString:className]) {
             [array addObject:viewC];
         }
         

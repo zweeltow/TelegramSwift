@@ -2,7 +2,58 @@
 <Workspace
    version = "1.0">
    <FileRef
+      location = "group:core-xprojects/rnnoise/rnnoise.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/Stripe/Stripe.xcodeproj">
+   </FileRef>
+   <FileRef
       location = "group:core-xprojects/Reachability/Reachability.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/HotKey/HotKey.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/TelegramVoip/TelegramVoip.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/FFMpegBinding/FFMpegBinding.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:submodules/AppCenter-sdk/AppCenter/AppCenter.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/OpusBinding/OpusBinding.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:submodules/AppCenter-sdk/AppCenterAnalytics/AppCenterAnalytics.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:submodules/AppCenter-sdk/AppCenterCrashes/AppCenterCrashes.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/webrtc/webrtc.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/crc32/Crc32_Xcode.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/ffmpeg/ffmpeg.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/libopus/libopus.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/libwebp/libwebp.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/Mozjpeg/Mozjpeg.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/TgVoipWebrtc/TgVoipWebrtc.xcodeproj">
+   </FileRef>
+   <FileRef
+      location = "group:core-xprojects/LegacyReachability/LegacyReachability.xcodeproj">
    </FileRef>
    <FileRef
       location = "group:core-xprojects/NetworkLogging/NetworkLogging.xcodeproj">
@@ -41,9 +92,6 @@
       location = "group:core-xprojects/TelegramCore/TelegramCore_Xcode.xcodeproj">
    </FileRef>
    <FileRef
-      location = "group:core-xprojects/crc32/Crc32_Xcode.xcodeproj">
-   </FileRef>
-   <FileRef
       location = "group:core-xprojects/SSignalKit/SSignalKit_Xcode.xcodeproj">
    </FileRef>
    <FileRef
@@ -54,12 +102,6 @@
    </FileRef>
    <FileRef
       location = "group:core-xprojects/SyncCore/SyncCore_Xcode.xcodeproj">
-   </FileRef>
-   <FileRef
-      location = "group:core-xprojects/TonBinding/TonBinding_Xcode.xcodeproj">
-   </FileRef>
-   <FileRef
-      location = "group:core-xprojects/WalletCore/WalletCore_Xcode.xcodeproj">
    </FileRef>
    <FileRef
       location = "group:core-xprojects/EncryptionProviderMac/EncryptionProvider_Xcode.xcodeproj">

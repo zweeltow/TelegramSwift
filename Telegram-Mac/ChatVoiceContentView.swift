@@ -32,6 +32,9 @@ class ChatVoiceContentView: ChatAudioContentView {
     let waveformView:AudioWaveformView
     private var acceptDragging: Bool = false
     private var playAfterDragging: Bool = false
+    
+    private var downloadingView: RadialProgressView?
+    
     required init(frame frameRect: NSRect) {
         waveformView = AudioWaveformView(frame: NSMakeRect(0, 20, 100, 20))
         super.init(frame: frameRect)
@@ -45,15 +48,13 @@ class ChatVoiceContentView: ChatAudioContentView {
     
     override func open() {
         if let parameters = parameters as? ChatMediaVoiceLayoutParameters, let context = context, let parent = parent  {
-            if let controller = globalAudio, let song = controller.currentSong, song.entry.isEqual(to: parent) {
-                controller.playOrPause()
+            if let controller = globalAudio, controller.playOrPause(parent.id) {
             } else {
-                
                 let controller:APController
                 if parameters.isWebpage {
-                    controller = APSingleResourceController(account: context.account, wrapper: APSingleWrapper(resource: parameters.resource, name: tr(L10n.audioControllerVoiceMessage), performer: parent.author?.displayTitle, id: parent.chatStableId), streamable: false)
+                    controller = APSingleResourceController(context: context, wrapper: APSingleWrapper(resource: parameters.resource, name: L10n.audioControllerVoiceMessage, performer: parent.author?.displayTitle, duration: Int32(parameters.duration), id: parent.chatStableId), streamable: false, volume: FastSettings.volumeRate)
                 } else {
-                    controller = APChatVoiceController(account: context.account, peerId: parent.id.peerId, index: MessageIndex(parent))
+                    controller = APChatVoiceController(context: context, chatLocationInput: parameters.chatLocationInput(), mode: parameters.chatMode, index: MessageIndex(parent), volume: FastSettings.volumeRate)
                 }
                 parameters.showPlayer(controller)
                 controller.start()
@@ -74,25 +75,23 @@ class ChatVoiceContentView: ChatAudioContentView {
         return theme.colors.accent
     }
     
-    override func checkState() {
-        super.checkState()
+    override func checkState(animated: Bool) {
+        super.checkState(animated: animated)
    
         
         if  let parameters = parameters as? ChatMediaVoiceLayoutParameters {
             if let parent = parent, let controller = globalAudio, let song = controller.currentSong {
                 if song.entry.isEqual(to: parent) {
-                    
-
                     switch song.state {
-                    case let .playing(data):
+                    case let .playing(current, _, progress):
                         waveformView.set(foregroundColor: wForegroundColor, backgroundColor: wBackgroundColor)
-                        let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(data.progress))
-                        waveformView.foregroundClipingView.change(size: NSMakeSize(width, waveformView.frame.height), animated: data.animated && !acceptDragging)
-                        let layout = parameters.duration(for: data.current)
+                        let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(progress))
+                        waveformView.foregroundClipingView.change(size: NSMakeSize(width, waveformView.frame.height), animated: animated && !acceptDragging)
+                        let layout = parameters.duration(for: current)
                         layout.measure(width: frame.width - 50)
                         durationView.update(layout)
                         break
-                    case let .fetching(progress, animated):
+                    case let .fetching(progress):
                         waveformView.set(foregroundColor: wForegroundColor, backgroundColor: wBackgroundColor)
                         let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(progress))
                         waveformView.foregroundClipingView.change(size: NSMakeSize(width, waveformView.frame.height), animated: animated && !acceptDragging)
@@ -101,11 +100,11 @@ class ChatVoiceContentView: ChatAudioContentView {
                         waveformView.set(foregroundColor: isIncomingConsumed ? wBackgroundColor : wForegroundColor, backgroundColor: wBackgroundColor)
                         waveformView.foregroundClipingView.change(size: NSMakeSize(parameters.waveformWidth, waveformView.frame.height), animated: false)
                         durationView.update(parameters.durationLayout)
-                    case let .paused(data):
+                    case let .paused(current, _, progress):
                         waveformView.set(foregroundColor: wForegroundColor, backgroundColor: wBackgroundColor)
-                        let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(data.progress))
-                        waveformView.foregroundClipingView.change(size: NSMakeSize(width, waveformView.frame.height), animated: data.animated && !acceptDragging)
-                        let layout = parameters.duration(for: data.current)
+                        let width = floorToScreenPixels(backingScaleFactor, parameters.waveformWidth * CGFloat(progress))
+                        waveformView.foregroundClipingView.change(size: NSMakeSize(width, waveformView.frame.height), animated: animated && !acceptDragging)
+                        let layout = parameters.duration(for: current)
                         layout.measure(width: frame.width - 50)
                         durationView.update(layout)
                     }
@@ -169,6 +168,8 @@ class ChatVoiceContentView: ChatAudioContentView {
         var updatedStatusSignal: Signal<MediaResourceStatus, NoError>
         
         let file:TelegramMediaFile = media as! TelegramMediaFile
+        
+      //  self.progressView.state = .None
  
         if let parent = parent, parent.flags.contains(.Unsent) && !parent.flags.contains(.Failed) {
             updatedStatusSignal = combineLatest(chatMessageFileStatus(account: context.account, file: file), context.account.pendingMessageManager.pendingMessageStatus(parent.id))
@@ -187,13 +188,39 @@ class ChatVoiceContentView: ChatAudioContentView {
             if let strongSelf = self {
                 strongSelf.fetchStatus = status
                 
+                var state: RadialProgressState? = nil
                 switch status {
                 case let .Fetching(_, progress):
+                    state = .Fetching(progress: progress, force: false)
                     strongSelf.progressView.state = .Fetching(progress: progress, force: false)
                 case .Remote:
+                    state = .Remote
                     strongSelf.progressView.state = .Remote
                 case .Local:
                     strongSelf.progressView.state = .Play
+                }
+                if let state = state {
+                    let current: RadialProgressView
+                    if let value = strongSelf.downloadingView {
+                        current = value
+                    } else {
+                        current = RadialProgressView(theme: strongSelf.progressView.theme, twist: true, size: NSMakeSize(40, 40))
+                        current.fetchControls = strongSelf.fetchControls
+                        strongSelf.downloadingView = current
+                        strongSelf.addSubview(current)
+                        current.frame = strongSelf.progressView.frame
+                        
+                        if !approximateSynchronousValue && animated {
+                            current.layer?.animateAlpha(from: 0.2, to: 1, duration: 0.3)
+                        }
+                    }
+                    current.state = state
+                } else if let download = strongSelf.downloadingView {
+                    download.state = .Fetching(progress: 1.0, force: false)
+                    strongSelf.downloadingView = nil
+                    download.layer?.animateAlpha(from: 1, to: 0.2, duration: 0.25, removeOnCompletion: false, completion: { [weak download] _ in
+                        download?.removeFromSuperview()
+                    })
                 }
             }
         }))
@@ -202,7 +229,7 @@ class ChatVoiceContentView: ChatAudioContentView {
             waveformView.waveform = parameters.waveform
             
             waveformView.set(foregroundColor: isIncomingConsumed ? wBackgroundColor : wForegroundColor, backgroundColor: wBackgroundColor)
-            checkState()
+            checkState(animated: animated)
         }
         
         

@@ -27,13 +27,20 @@ class RecentSessionRowItem: GeneralRowItem {
         
         let attr = NSMutableAttributedString()
         
-        _ = attr.append(string: session.deviceModel + ", " + session.platform + " " + session.systemVersion, color: theme.colors.text, font: .normal(.text))
+        
+        var trimmed = session.deviceModel.trimmingCharacters(in: CharacterSet(charactersIn: "1234567890,"))
+        
+        if trimmed.hasSuffix("Pro") || trimmed.hasSuffix("Air") {
+            trimmed = trimmed.nsstring.substring(to: trimmed.length - 3) + " " + trimmed.nsstring.substring(from: trimmed.length - 3)
+        }
+        
+        _ = attr.append(string:trimmed + ", " + session.platform + " " + session.systemVersion, color: theme.colors.text, font: .normal(.text))
         
         _ = attr.append(string: "\n")
         
         _ = attr.append(string: session.ip + " " + session.country, color: theme.colors.grayText, font: .normal(.text))
         
-        descLayout = TextViewLayout(attr, lineSpacing: 2)
+        descLayout = TextViewLayout(attr, maximumNumberOfLines: 2, lineSpacing: 2)
     
         dateLayout = TextViewLayout(.initialize(string: session.isCurrent ? tr(L10n.peerStatusOnline) : DateUtils.string(forMessageListDate: session.activityDate), color: session.isCurrent ? theme.colors.accent : theme.colors.grayText, font: .normal(.text)))
         
@@ -44,8 +51,8 @@ class RecentSessionRowItem: GeneralRowItem {
     
     override func makeSize(_ width: CGFloat, oldWidth: CGFloat) -> Bool {
         let success = super.makeSize(width, oldWidth: oldWidth)
-        headerLayout.measure(width: width - 60)
-        descLayout.measure(width: width - 60)
+        headerLayout.measure(width: blockWidth - 80)
+        descLayout.measure(width: blockWidth - 80)
         dateLayout.measure(width: .greatestFiniteMagnitude)
         return success
     }

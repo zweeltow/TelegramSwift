@@ -344,6 +344,12 @@ public extension CALayer {
         self.add(animation, forKey: "borderWidth")
     }
     
+    func animateBorderColor() ->Void {
+        let animation = CABasicAnimation(keyPath: "borderColor")
+        animation.duration = 0.2
+        self.add(animation, forKey: "borderColor")
+    }
+    
     func animateContents() ->Void {
         let animation = CABasicAnimation(keyPath: "contents")
         animation.duration = 0.2
@@ -398,8 +404,11 @@ public extension NSView {
     
     func _mouseInside() -> Bool {
         if let window = self.window {
+       
             var location:NSPoint = window.mouseLocationOutsideOfEventStream
+
             location = self.convert(location, from: nil)
+            
             
             if let view = window.contentView!.hitTest(window.mouseLocationOutsideOfEventStream) {
                 if let view = view as? View {
@@ -512,12 +521,16 @@ public extension NSView {
             x = CGFloat(roundf(Float((sv.frame.width - frame.width)/2.0)))
         }
         
-        if x == 128.0 {
-            var bp:Int = 0
-            bp += 1
-        }
         
         self.setFrameOrigin(NSMakePoint(x + addition, y == nil ? NSMinY(self.frame) : y!))
+    }
+    
+    func centerFrameX(y:CGFloat? = nil, addition: CGFloat = 0) -> CGRect {
+        var x:CGFloat = 0
+        if let sv = self.superview {
+            x = CGFloat(roundf(Float((sv.frame.width - frame.width)/2.0)))
+        }
+        return CGRect(origin: NSMakePoint(x + addition, y == nil ? NSMinY(self.frame) : y!), size: frame.size)
     }
     
     func focus(_ size:NSSize) -> NSRect {
@@ -550,6 +563,17 @@ public extension NSView {
         self.setFrameOrigin(NSMakePoint(x ?? frame.minX, y + addition))
     }
     
+    func centerFrameY(x:CGFloat? = nil, addition: CGFloat = 0) -> CGRect {
+        
+        var y:CGFloat = 0
+        
+        if let sv = self.superview {
+            y = CGFloat(round((sv.frame.height - frame.height)/2.0))
+        }
+        
+        return CGRect(origin: NSMakePoint(x ?? frame.minX, y + addition), size: frame.size)
+    }
+    
     
     func center(_ superView:NSView? = nil) -> Void {
         
@@ -568,6 +592,29 @@ public extension NSView {
         
     }
     
+    func centerPoint() -> CGPoint {
+        var x:CGFloat = 0
+        var y:CGFloat = 0
+        
+        if let sv = self.superview {
+            x = CGFloat(round((sv.frame.width - frame.width)/2.0))
+            y = CGFloat(round((sv.frame.height - frame.height)/2.0))
+        }
+        return NSMakePoint(x, y)
+    }
+    
+    func centerFrame() -> CGRect {
+        var x:CGFloat = 0
+        var y:CGFloat = 0
+        
+        if let sv = self.superview {
+            x = CGFloat(round((sv.frame.width - frame.width)/2.0))
+            y = CGFloat(round((sv.frame.height - frame.height)/2.0))
+        }
+        return CGRect(origin: NSMakePoint(x, y), size: frame.size)
+    }
+
+
     
     func _change(pos position: NSPoint, animated: Bool, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, additive: Bool = false, forceAnimateIfHasAnimation: Bool = false, completion:((Bool)->Void)? = nil) -> Void {
         if animated || (forceAnimateIfHasAnimation && self.layer?.animation(forKey:"position") != nil) {
@@ -647,6 +694,11 @@ public extension NSView {
     }
     
     func _change(opacity to: CGFloat, animated: Bool = true, _ save:Bool = true, removeOnCompletion: Bool = true, duration:Double = 0.2, timingFunction: CAMediaTimingFunctionName = CAMediaTimingFunctionName.easeOut, completion:((Bool)->Void)? = nil) {
+        
+        if Float(to) == self.layer?.opacity {
+            completion?(true)
+            return
+        }
         if animated {
             if let layer = self.layer {
                 var opacity:CGFloat = CGFloat(layer.opacity)
@@ -683,6 +735,9 @@ public extension NSView {
             if let sub = sub as? View, let resporeState = sub.interactionStateForRestore {
                 sub.userInteractionEnabled = resporeState
                 sub.interactionStateForRestore = nil
+            } else if let sub = sub as? TableRowView, let resporeState = sub.interactionStateForRestore {
+                sub.userInteractionEnabled = resporeState
+                sub.interactionStateForRestore = nil
             }
             sub.restoreHierarchyInteraction()
         }
@@ -693,6 +748,9 @@ public extension NSView {
             if let sub = sub as? View, let resporeState = sub.dynamicContentStateForRestore {
                 sub.isDynamicContentLocked = resporeState
                 sub.dynamicContentStateForRestore = nil
+            } else if let sub = sub as? TableRowView, let resporeState = sub.dynamicContentStateForRestore {
+                sub.isDynamicContentLocked = resporeState
+                sub.dynamicContentStateForRestore = nil
             }
             sub.restoreHierarchyDynamicContent()
         }
@@ -701,6 +759,9 @@ public extension NSView {
     func disableHierarchyDynamicContent() -> Void {
         for sub in self.subviews {
             if let sub = sub as? View, sub.interactionStateForRestore == nil {
+                sub.dynamicContentStateForRestore = sub.isDynamicContentLocked
+                sub.isDynamicContentLocked = true
+            } else if let sub = sub as? TableRowView, sub.interactionStateForRestore == nil {
                 sub.dynamicContentStateForRestore = sub.isDynamicContentLocked
                 sub.isDynamicContentLocked = true
             }
@@ -784,13 +845,16 @@ public extension CGSize {
     }
     
     func multipliedByScreenScale() -> CGSize {
-        let scale:CGFloat = 2.0
+        let scale:CGFloat = System.backingScale
         return CGSize(width: self.width * scale, height: self.height * scale)
     }
     
     func dividedByScreenScale() -> CGSize {
-        let scale:CGFloat = 2.0
+        let scale:CGFloat = System.backingScale
         return CGSize(width: self.width / scale, height: self.height / scale)
+    }
+    var bounds: CGRect {
+        return NSMakeRect(0, 0, width, height)
     }
 }
 
@@ -919,6 +983,10 @@ public extension CGImage {
     
     var size:NSSize {
         return NSMakeSize(CGFloat(width), CGFloat(height))
+    }
+    
+    var systemSize:NSSize {
+        return NSMakeSize(CGFloat(width) / System.backingScale, CGFloat(height) / System.backingScale)
     }
     
     var backingBounds: NSRect {
@@ -1353,6 +1421,8 @@ public extension NSColor {
         var b: CGFloat = 0
         var a: CGFloat = 0
         
+        
+        
         let color = self.usingColorSpaceName(NSColorSpaceName.deviceRGB)!
 
         
@@ -1401,9 +1471,12 @@ public extension NSColor {
 
 public extension Int {
     
-    func prettyFormatter(_ n: Int, iteration: Int) -> String {
+    func prettyFormatter(_ n: Int, iteration: Int, rounded: Bool = false) -> String {
         let keys = ["K", "M", "B", "T"]
-        let d = Double((n / 100)) / 10.0
+        var d = Double((n / 100)) / 10.0
+        if rounded {
+            d = floor(d)
+        }
         let isRound:Bool = (Int(d) * 10) % 10 == 0
         if d < 1000 {
             if d == 1 {
@@ -1417,8 +1490,15 @@ public extension Int {
             }
         }
         else {
-            return self.prettyFormatter(Int(d), iteration: iteration + 1)
+            return self.prettyFormatter(Int(d), iteration: iteration + 1, rounded: rounded)
         }
+    }
+    
+    var prettyRounded: String {
+        if self < 1000 {
+            return "\(self)"
+        }
+        return self.prettyFormatter(self, iteration: 0, rounded: true).replacingOccurrences(of: ".", with: Locale.current.decimalSeparator ?? ".")
     }
     
     var prettyNumber:String {

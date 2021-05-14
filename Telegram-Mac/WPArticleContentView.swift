@@ -258,7 +258,7 @@ class WPArticleContentView: WPContentView {
             if layout.content.image == nil, let file = layout.content.file, let dimension = layout.imageSize {
                 var representations: [TelegramMediaImageRepresentation] = []
                 representations.append(contentsOf: file.previewRepresentations)
-                representations.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(dimension), resource: file.resource))
+                representations.append(TelegramMediaImageRepresentation(dimensions: PixelDimensions(dimension), resource: file.resource, progressiveSizes: [], immediateThumbnailData: nil))
                 image = TelegramMediaImage(imageId: file.id ?? MediaId(namespace: 0, id: arc4random64()), representations: representations, immediateThumbnailData: file.immediateThumbnailData, reference: nil, partialReference: file.partialReference, flags: [])
                 
             }
@@ -465,7 +465,7 @@ class WPArticleContentView: WPContentView {
                     countAccessoryView = ChatMessageAccessoryView(frame: NSZeroRect)
                     imageView?.addSubview(countAccessoryView!)
                 }
-                countAccessoryView?.updateText(L10n.chatWebpageMediaCount(1, mediaCount), maxWidth: 40, status: nil, isStreamable: false)
+                countAccessoryView?.updateText(L10n.chatWebpageMediaCount1(1, mediaCount), maxWidth: 40, status: nil, isStreamable: false)
             } else {
                 countAccessoryView?.removeFromSuperview()
                 countAccessoryView = nil

@@ -11,6 +11,17 @@ import TGUIKit
 import SwiftSignalKit
 import AVFoundation
 
+private func findContentsLayer(_ sublayers: [CALayer]) -> CALayer? {
+    for sublayer in sublayers {
+        if let _ = sublayer.contents {
+            return sublayer
+        } else if let sublayers = sublayer.sublayers, !sublayers.isEmpty {
+            return findContentsLayer(sublayers)
+        }
+    }
+    return nil
+}
+
 private final class MediaPlayerViewLayer: AVSampleBufferDisplayLayer {
     override func action(forKey event: String) -> CAAction? {
         return NSNull()
@@ -286,6 +297,15 @@ final class MediaPlayerView: View {
         self.videoQueue.async { [weak self] in
             let videoLayer = MediaPlayerViewLayer()
             videoLayer.videoGravity = .resize
+            
+            #if arch(x86_64)
+            if let sublayers = videoLayer.sublayers {
+                findContentsLayer(sublayers)?.minificationFilter = .trilinear
+            }
+            #endif
+            
+            
+            //videoLayer.sublayers?.first?.magnificationFilter = .nearest
             Queue.mainQueue().async {
                 if let strongSelf = self {
                     strongSelf.videoLayer = videoLayer
@@ -327,6 +347,14 @@ final class MediaPlayerView: View {
             if !oldValue.size.equalTo(self.frame.size) {
                 self.updateLayout()
             }
+        }
+    }
+    
+    override func setFrameSize(_ newSize: NSSize) {
+        let oldValue = self.frame
+        super.setFrameSize(newSize)
+        if !oldValue.size.equalTo(self.frame.size) {
+            self.updateLayout()
         }
     }
     

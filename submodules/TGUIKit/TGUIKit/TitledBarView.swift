@@ -18,7 +18,7 @@ private class TitledContainerView : View {
         }
     }
     
-    var inset:CGFloat = 50
+    var inset:()->CGFloat = { 50 }
     
     var text:NSAttributedString? {
         didSet {
@@ -64,15 +64,15 @@ private class TitledContainerView : View {
                 additionalInset += image.backingSize.width + 5
             }
             
-            let (textLayout, textApply) = TextNode.layoutText(maybeNode: titleNode,  text, nil, 1, .end, NSMakeSize(frame.width - inset - additionalInset, frame.height), nil,false, .left)
+            let (textLayout, textApply) = TextNode.layoutText(maybeNode: titleNode,  text, nil, 1, .end, NSMakeSize(frame.width - inset() - additionalInset, frame.height), nil,false, .left)
             var tY = focus(textLayout.size).minY
             
             if let status = status {
                 
-                let (statusLayout, statusApply) = TextNode.layoutText(maybeNode: statusNode,  status, nil, 1, .end, NSMakeSize(frame.width - inset - additionalInset, frame.height), nil,false, .left)
+                let (statusLayout, statusApply) = TextNode.layoutText(maybeNode: statusNode,  status, nil, 1, .end, NSMakeSize(frame.width - inset() - additionalInset, frame.height), nil,false, .left)
                 
                 let t = textLayout.size.height + statusLayout.size.height + 2.0
-                tY = (frame.height - t) / 2.0
+                tY = floorToScreenPixels(backingScaleFactor, (frame.height - t) / 2.0)
                 
                 let sY = tY + textLayout.size.height + 2.0
                 if !hiddenStatus {
@@ -87,11 +87,11 @@ private class TitledContainerView : View {
             
             if let (titleImage, side) = titleImage {
                 switch side {
-                case .left:
-                    ctx.draw(titleImage, in: NSMakeRect(textInset == nil ? textRect.minX - titleImage.backingSize.width : textInset!, tY + 4, titleImage.backingSize.width, titleImage.backingSize.height))
+                case let .left(topInset):
+                    ctx.draw(titleImage, in: NSMakeRect(textInset == nil ? textRect.minX - titleImage.backingSize.width : textInset!, tY + 4 + topInset, titleImage.backingSize.width, titleImage.backingSize.height))
                     textRect.origin.x += floorToScreenPixels(backingScaleFactor, titleImage.backingSize.width) + 4
-                case .right:
-                    ctx.draw(titleImage, in: NSMakeRect(textRect.maxX + 3, tY + 1, titleImage.backingSize.width, titleImage.backingSize.height))
+                case let .right(topInset):
+                    ctx.draw(titleImage, in: NSMakeRect(textRect.maxX + 3, tY + 1 + topInset, titleImage.backingSize.width, titleImage.backingSize.height))
                 }
             }
             
@@ -101,8 +101,8 @@ private class TitledContainerView : View {
 }
 
 public enum TitleBarImageSide {
-    case left
-    case right
+    case left(topInset: CGFloat)
+    case right(topInset: CGFloat)
 }
 
 open class TitledBarView: BarView {
@@ -115,14 +115,13 @@ open class TitledBarView: BarView {
     
     open override var backgroundColor: NSColor {
         didSet {
-            containerView.backgroundColor = backgroundColor
+            containerView.backgroundColor = .clear
         }
     }
     
     public var text:NSAttributedString? {
         didSet {
             if text != oldValue {
-                _containerView.inset = inset
                 _containerView.text = text
             }
         }
@@ -131,7 +130,6 @@ open class TitledBarView: BarView {
     public var status:NSAttributedString? {
         didSet {
             if status != oldValue {
-                _containerView.inset = inset
                 _containerView.status = status
             }
         }
@@ -172,6 +170,10 @@ open class TitledBarView: BarView {
         _containerView.text = text
         _containerView.status = status
         _containerView.textInset = textInset
+        
+        _containerView.inset = { [weak self] in
+            return self?.inset ?? 50
+        }
     }
     
     open override func draw(_ dirtyRect: NSRect) {

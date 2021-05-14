@@ -22,7 +22,7 @@ struct CalendarMonthInteractions {
     }
 }
 
-struct CalendarMonthStruct {
+final class CalendarMonthStruct {
     let month:Date
     let prevMonth:Date
     let nextMonth:Date
@@ -32,14 +32,16 @@ struct CalendarMonthStruct {
     let lastDayOfNextMonth:Int
     
     let currentStartDay:Int
-    let selectedDay:Int?
+    var selectedDay:Int?
     
     let components:DateComponents
     let dayHandler:(Int)->Void
     let onlyFuture: Bool
-    init(month:Date, selectDayAnyway: Bool, onlyFuture: Bool, dayHandler:@escaping (Int)->Void) {
+    let limitedBy: Date?
+    init(month:Date, selectDayAnyway: Bool, onlyFuture: Bool, limitedBy: Date?, dayHandler:@escaping (Int)->Void) {
         self.month = month
         self.onlyFuture = onlyFuture
+        self.limitedBy = limitedBy
         self.dayHandler = dayHandler
         self.prevMonth = CalendarUtils.stepMonth(-1, date: month)
         self.nextMonth = CalendarUtils.stepMonth(1, date: month)
@@ -83,13 +85,14 @@ class CalendarMonthView : View {
             day.set(background: theme.colors.background, for: .Normal)
             
             let current:Int
+            
             if i + 1 < month.currentStartDay {
                 current = (month.lastDayOfPrevMonth - month.currentStartDay) + i + 2
-                day.set(color: .grayText, for: .Normal)
+                day.set(color: theme.colors.grayText, for: .Normal)
 
             } else if (i + 2) - month.currentStartDay > month.lastDayOfMonth {
                 current = (i + 2) - (month.currentStartDay + month.lastDayOfMonth)
-                day.set(color: .grayText, for: .Normal)
+                day.set(color: theme.colors.grayText, for: .Normal)
             } else {
                 current = (i + 1) - month.currentStartDay + 1
                 
@@ -101,18 +104,26 @@ class CalendarMonthView : View {
                 
                 if month.onlyFuture, CalendarUtils.isSameDate(month.month, date: Date(), checkDay: false) {
                     if current < components.day! {
-                        day.set(color: .grayText, for: .Normal)
                         skipDay = true
                     }
                 } else if month.onlyFuture, components.year! + 1 == month.components.year! && components.month! == month.components.month!  {
                     if current > components.day! {
-                        day.set(color: .grayText, for: .Normal)
                         skipDay = true
                     }
+                } else if CalendarUtils.isSameDate(month.month, date: Date(), checkDay: false), current > components.day! {
+                    skipDay = true
+                }
+                
+                if let limitedBy = month.limitedBy {
+                    let limited = calendar.dateComponents([.year, .month, .day], from: limitedBy)
+                    if limited.year! < month.components.year! || limited.month! < month.components.month! || limited.day! < current {
+                        skipDay = true
+                    }
+                    
                 }
                 if !skipDay {
-                    day.set(color: .white, for: .Highlight)
-                    
+                    day.set(color: theme.colors.underSelectedColor, for: .Highlight)
+
                     if (i + 1) % 7 == 0 || (i + 2) % 7 == 0 {
                         day.set(color: theme.colors.redUI, for: .Normal)
                     } else {
@@ -122,18 +133,24 @@ class CalendarMonthView : View {
                     day.layer?.cornerRadius = .cornerRadius
                     
                     if let selectedDay = month.selectedDay, current == selectedDay {
-                        day.isSelected = true
-                        day.set(background: theme.colors.accentSelect, for: .Highlight)
-                        day.apply(state: .Highlight)
+                       // day.isSelected = true
+                        day.set(color: theme.colors.underSelectedColor, for: .Normal)
+
+                        day.set(background: theme.colors.accent, for: .Normal)
+                        day.set(background: theme.colors.accent, for: .Highlight)
                     } else {
+                        day.set(background: theme.colors.background, for: .Normal)
                         day.set(background: theme.colors.accent, for: .Highlight)
                     }
                     
-                    day.set(handler: { (control) in
-                        
+                    day.set(handler: { [weak self] (control) in
+                        month.selectedDay = current
                         month.dayHandler(current)
+                        self?.layout(for: month)
                         
                     }, for: .Click)
+                } else {
+                    day.set(color: theme.colors.grayText, for: .Normal)
                 }
             }
             day.set(text: "\(current)", for: .Normal)
@@ -171,9 +188,11 @@ class CalendarMonthController: GenericViewController<CalendarMonthView> {
     let interactions:CalendarMonthInteractions
     let month:CalendarMonthStruct
     let onlyFuture: Bool
-    init(_ month:Date, onlyFuture: Bool, selectDayAnyway: Bool, interactions:CalendarMonthInteractions) {
+    let limitedBy: Date?
+    init(_ month:Date, onlyFuture: Bool, limitedBy: Date?, selectDayAnyway: Bool, interactions:CalendarMonthInteractions) {
         self.onlyFuture = onlyFuture
-        self.month = CalendarMonthStruct(month: month, selectDayAnyway: selectDayAnyway, onlyFuture: self.onlyFuture, dayHandler: { day in
+        self.limitedBy = limitedBy
+        self.month = CalendarMonthStruct(month: month, selectDayAnyway: selectDayAnyway, onlyFuture: self.onlyFuture, limitedBy: self.limitedBy, dayHandler: { day in
             interactions.selectAction(CalendarUtils.monthDay(day, date: month))
         })
         self.interactions = interactions
@@ -214,7 +233,7 @@ class CalendarMonthController: GenericViewController<CalendarMonthView> {
                     self.interactions.changeYear(i, self.month.month)
                 }))
             }
-            if !items.isEmpty {
+            if !items.isEmpty && !self.onlyFuture {
                 showPopover(for: control, with: SPopoverViewController(items: items), edge: .maxY, inset: NSMakePoint(30, -50))
             }
             

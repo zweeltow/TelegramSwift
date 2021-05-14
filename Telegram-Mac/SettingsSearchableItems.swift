@@ -311,7 +311,7 @@ private func profileSearchableItems(context: AccountContext, canAddAccount: Bool
         presentProfileSettings(context, present, .bio)
     }))
     items.append(SettingsSearchableItem(id: .profile(2), title: L10n.editAccountChangeNumber, alternate: synonyms(L10n.settingsSearchSynonymsEditProfilePhoneNumber), icon: icon, breadcrumbs: [L10n.editAccountTitle], present: { context, _, present in
-        present(.push, PhoneNumberIntroController.init(context))
+        present(.push, PhoneNumberIntroController(context))
     }))
     items.append(SettingsSearchableItem(id: .profile(3), title: L10n.editAccountUsername, alternate: synonyms(L10n.settingsSearchSynonymsEditProfileUsername), icon: icon, breadcrumbs: [L10n.editAccountTitle], present: { context, _, present in
         present(.push, UsernameSettingsViewController(context))
@@ -731,7 +731,7 @@ func settingsSearchableItems(context: AccountContext, archivedStickerPacks: Sign
                 confirm(for: context.window, information: L10n.accountConfirmAskQuestion, thridTitle: L10n.accountConfirmGoToFaq, successHandler: {  result in
                     switch result {
                     case .basic:
-                        _ = showModalProgress(signal: supportPeerId(account: context.account), for: context.window).start(next: {  peerId in
+                        _ = showModalProgress(signal: context.engine.peerNames.supportPeerId(), for: context.window).start(next: {  peerId in
                             if let peerId = peerId {
                                 present(.push, ChatController(context: context, chatLocation: .peer(peerId)))
                             }

@@ -31,6 +31,14 @@ fileprivate class GMagnifyView : MagnifyView  {
         return true
     }
     
+    override func scrollWheel(with event: NSEvent) {
+        if magnify == 1.0 {
+            superview?.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
+    
     func updateStatus(_ status: Signal<MediaResourceStatus, NoError>) {
         statusDisposable.set((status |> deliverOnMainQueue).start(next: { [weak self] status in
             self?.updateProgress(status)
@@ -150,6 +158,10 @@ class GalleryPageView : NSView {
         self.wantsLayer = true
         self.canDrawSubviewsIntoLayer = true
     }
+    
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+    }
 
     
     required init?(coder: NSCoder) {
@@ -158,9 +170,22 @@ class GalleryPageView : NSView {
     
 }
 
+private final class PageController : NSPageController {
+    
+    
+    deinit {
+        var bp:Int = 0
+        bp += 1
+    }
+    
+    override func scrollWheel(with event: NSEvent) {
+        super.scrollWheel(with: event)
+    }
+}
+
 class GalleryPageController : NSObject, NSPageControllerDelegate {
 
-    private let controller:NSPageController = NSPageController()
+    private let controller:PageController = PageController()
     private let ioDisposabe:MetaDisposable = MetaDisposable()
     private let smartUpdaterDisposable = MetaDisposable()
     private var identifiers:[NSPageController.ObjectIdentifier:MGalleryItem] = [:]
@@ -177,6 +202,8 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
     private var startIndex:Int = -1
     let view:GalleryPageView = GalleryPageView()
     private let captionView: TextView = TextView()
+    private let captionContainer = View()
+    private let captionScrollView = ScrollView()
     private let window:Window
     private let autohideCaptionDisposable = MetaDisposable()
     private let magnifyDisposable = MetaDisposable()
@@ -223,7 +250,6 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
         _prev.set(background: .clear, for: .Normal)
         _next.set(background: .clear, for: .Normal)
 
-       
         
         _prev.frame = NSMakeRect(0, 0, 60, frame.height)
         _next.frame = NSMakeRect(frame.width - 60, 0, 60, frame.height)
@@ -231,6 +257,8 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
         _next.userInteractionEnabled = false
         _prev.userInteractionEnabled = false
 
+        captionContainer.addSubview(captionView)
+        captionScrollView.documentView = captionContainer
         
         indexDisposable.set((selectedIndex.get()).start(next: { [weak self] index in
             guard let `self` = self else {return}
@@ -265,9 +293,10 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
             }
             dragged = nil
             
+            let view = self.window.contentView?.hitTest(event.locationInWindow)
             let point = self.controller.view.convert(event.locationInWindow, from: nil)
             
-            if NSPointInRect(point, self.captionView.frame), self.captionView.layer?.opacity != 0, let captionLayout = self.captionView.layout, captionLayout.link(at: self.captionView.convert(event.locationInWindow, from: nil)) != nil {
+            if NSPointInRect(point, self.captionScrollView.frame), self.captionScrollView.layer?.opacity != 0, let captionLayout = self.captionView.layout, captionLayout.link(at: self.captionView.convert(event.locationInWindow, from: nil)) != nil {
                 self.captionView.mouseUp(with: event)
                 return .invoked
             } else if self.captionView.mouseInside() {
@@ -279,6 +308,11 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
                     return .invoked
                 }
                 
+                let hitTestView = self.window.contentView?.hitTest(event.locationInWindow)
+                if hitTestView is Control {
+                    return .rejected
+                }
+                
                 if let view = view.contentView as? SVideoView, view.insideControls {
                     return .rejected
                 }
@@ -286,12 +320,20 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
                     return .rejected
                 }
                 
-                _ = interactions.dismiss()
+                _ = interactions.dismiss(event)
+                return .invoked
+            } else if view is GalleryModernControlsView {
+                _ = interactions.dismiss(event)
                 return .invoked
             }
             return .invokeNext
         }, with: self, for: .leftMouseUp)
         
+        
+        window.set(mouseHandler: { event -> KeyHandlerResult in
+            dragged = nil
+            return .rejected
+        }, with: self, for: .leftMouseDown)
     
         window.set(mouseHandler: { event -> KeyHandlerResult in
             guard dragged == nil else {return .rejected}
@@ -318,7 +360,7 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
             guard let `self` = self else {return .rejected}
             self.autohideCaptionDisposable.set(nil)
             if self.lockedTransition == false {
-                self.captionView.change(opacity: 1.0)
+                self.captionScrollView.change(opacity: 1.0)
                 self.configureCaptionAutohide()
             }
             (self.controller.selectedViewController?.view as? GMagnifyView)?.hideOrShowControls(hasPrev: self.hasPrev, hasNext: self.hasNext, animated: true)
@@ -351,10 +393,15 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
     
     private func configureCaptionAutohide() {
         let view = controller.selectedViewController?.view as? MagnifyView
-        captionView.removeFromSuperview()
-        controller.view.addSubview(captionView)
+        if captionScrollView.superview != nil {
+            captionScrollView.removeFromSuperview()
+            controller.view.addSubview(captionScrollView)
+        }
         autohideCaptionDisposable.set((Signal<Void, NoError>.single(Void()) |> delay(view?.mouseInContent == true ? 5.0 : 1.5, queue: Queue.mainQueue())).start(next: { [weak self] in
-            self?.captionView.change(opacity: 0)
+            guard let `self` = self else {
+                return
+            }
+            self.captionScrollView.change(opacity: self.captionScrollView._mouseInside() ? 1 : 0)
         }))
     }
     
@@ -399,7 +446,7 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
             while !queuedTransitions.isEmpty {
                 let transition = queuedTransitions[0]
                 
-                let searchItem:(AnyHashable)->MGalleryItem? = { stableId in
+                let searchItem:(AnyHashable, [MGalleryItem])->MGalleryItem? = { stableId, items in
                     for item in items {
                         if item.stableId == stableId {
                             return item
@@ -412,17 +459,19 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
                     if items.count > rdx {
                         let item = items[rdx]
                         identifiers.removeValue(forKey: item.identifier)
+                        cache.removeObject(forKey: item.identifier as AnyObject)
                         items.remove(at: rdx)
                     }
                 }
                 for (idx,item) in transition.inserted {
-                    let item = searchItem(item.stableId) ?? item
+                    let item = searchItem(item.stableId, items) ?? item
                     identifiers[item.identifier] = item
                     items.insert(item, at: min(idx, items.count))
                 }
                 for (idx,item) in transition.updated {
-                    let item = searchItem(item.stableId) ?? item
+                    let item = searchItem(item.stableId, items) ?? item
                     identifiers[item.identifier] = item
+                    cache.removeObject(forKey: item.identifier as AnyObject)
                     if idx < items.count {
                         items[idx] = item
                     }
@@ -435,6 +484,9 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
             if self.items != items {
                 
                 if items.count > 0 {
+                    
+                    let selectedItem = self.selectedItem
+                    
                     controller.arrangedObjects = items
                     controller.completeTransition()
                     
@@ -450,8 +502,10 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
                     }
                     if wasInited {
                         items[controller.selectedIndex].request(immediately: false)
+                        if selectedItem != self.selectedItem {
+                            self.selectedItem?.appear(for: controller.selectedViewController?.view)
+                        }
                     }
-                    //pageControllerDidEndLiveTransition(controller, force: true)
                 }
                 if wasInited {
                     transitionCallFunc?(self.thumbsControl.layoutItems(with: self.items, selectedIndex: controller.selectedIndex, animated: animated), selectedItem)
@@ -586,11 +640,14 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
             view.minMagnify = item.minMagnify
             view.maxMagnify = item.maxMagnify
             
+        
+            item.size.set(.single(item.sizeValue))
             
             item.view.set(.single(view.contentView))
-            smartUpdaterDisposable.set(view.smartUpdaterValue.start(next: { size in
-                item.size.set(.single(size))
-            }))
+            
+//            smartUpdaterDisposable.set(view.smartUpdaterValue.start(next: { size in
+//                item.size.set(.single(size))
+//            }))
             
         }
     }
@@ -598,8 +655,9 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
     
     func pageControllerWillStartLiveTransition(_ pageController: NSPageController) {
         lockedTransition = true
-        captionView.change(opacity: 0)
+        captionScrollView.change(opacity: 0)
         startIndex = pageController.selectedIndex
+        
         if items.count > 1 {
             items[min(max(pageController.selectedIndex - 1, 0), items.count - 1)].request()
             items[min(max(pageController.selectedIndex + 1, 0), items.count - 1)].request()
@@ -609,9 +667,9 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
     func pageControllerDidEndLiveTransition(_ pageController: NSPageController, force:Bool) {
         let previousView = currentController?.view as? MagnifyView
         
-        captionView.change(opacity: 0, animated: captionView.superview != nil, completion: { [weak captionView] completed in
+        captionScrollView.change(opacity: 0, animated: captionScrollView.superview != nil, completion: { [weak captionScrollView] completed in
             if completed {
-                captionView?.removeFromSuperview()
+                captionScrollView?.removeFromSuperview()
             }
         })
         
@@ -633,8 +691,8 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
                     
                 }
                 controllerView.frame = view.focus(contentFrame.size, inset:contentInset)
-                magnifyDisposable.set(controllerView.magnifyUpdater.get().start(next: { [weak self] value in
-                    self?.captionView.isHidden = value > 1.0
+                magnifyDisposable.set(controllerView.magnifyUpdaterValue.start(next: { [weak self] value in
+                    self?.captionScrollView.isHidden = value > 1.0
                 }))
                 
             }
@@ -642,17 +700,25 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
         
         let item = self.item(at: pageController.selectedIndex)
         if let caption = item.caption {
+            caption.measure(width: min(item.sizeValue.width + 240, min(item.pagerSize.width - 200, 600)))
             captionView.update(caption)
-            captionView.backgroundColor = NSColor.black.withAlphaComponent(0.5)
+            captionView.backgroundColor = .clear
             captionView.disableBackgroundDrawing = true
-            captionView.setFrameSize(captionView.frame.size.width + 10, captionView.frame.size.height + 8)
-            captionView.layer?.cornerRadius = .cornerRadius
             
-            view.addSubview(captionView)
-            captionView.change(opacity: 1.0)
-            captionView.centerX(y: 90)
+            
+            view.addSubview(captionScrollView)
+            captionScrollView.change(opacity: 1.0)
+            captionScrollView.setFrameSize(captionView.frame.size.width + 10, min(90, captionView.frame.height))
+            captionScrollView.centerX(y: 100)
+            captionScrollView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.9).cgColor
+            captionScrollView.layer?.cornerRadius = .cornerRadius
+            
+            captionContainer.frame = NSMakeRect(0, 0, captionScrollView.frame.width, captionView.frame.height)
+            captionView.center()
+
         } else {
             captionView.update(nil)
+            captionScrollView.removeFromSuperview()
         }
         
         configureCaptionAutohide()
@@ -719,14 +785,22 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
             }, hasNext: { [weak self] in
                 return self?.hasNext ?? false
             }, dismiss: { [weak self] in
-                _ = self?.interactions.dismiss()
+                if let event = NSApp.currentEvent {
+                    _ = self?.interactions.dismiss(event)
+                }
             })
+            item.magnify.set(magnify.magnifyUpdaterValue |> deliverOnPrepareQueue)
             controller.view = magnify
             if hasInited {
                 item.request()
             }
             magnify.updateStatus(item.status)
             cache.setObject(controller, forKey: identifier as AnyObject)
+            
+            if selectedItem == item, hasInited {
+               // item.view.set(.single(magnify.contentView))
+                item.appear(for: magnify.contentView)
+            }
             return controller
         }
     }
@@ -772,18 +846,26 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
         return nil
     }
     
-    func animateIn( from:@escaping(AnyHashable)->NSView?, completion:(()->Void)? = nil, addAccesoryOnCopiedView:(((AnyHashable?, NSView))->Void)? = nil, addVideoTimebase:(((AnyHashable, NSView))->Void)? = nil) ->Void {
+    func hideVideoControls() -> Bool {
+        if let item = self.selectedItem as? MGalleryVideoItem {
+            return item.hideControls()
+        }
+        return false
+    }
+    
+    func animateIn( from:@escaping(AnyHashable)->NSView?, completion:(()->Void)? = nil, addAccesoryOnCopiedView:(((AnyHashable?, NSView))->Void)? = nil, addVideoTimebase:(((AnyHashable, NSView))->Void)? = nil, showBackground:(()->Void)? = nil) ->Void {
         
         window.contentView?.addSubview(_prev)
         window.contentView?.addSubview(_next)
-        captionView.change(opacity: 0, animated: false)
+        captionScrollView.change(opacity: 0, animated: false)
         if let selectedView = controller.selectedViewController?.view as? MagnifyView, let item = self.selectedItem {
             item.request()
             lockedTransition = true
             if let oldView = from(item.stableId), let oldWindow = oldView.window, let oldScreen = oldWindow.screen {
                 selectedView.isHidden = true
                 
-                ioDisposabe.set((item.image.get() |> take(1) |> timeout(0.7, queue: Queue.mainQueue(), alternate: .single(.image(nil, nil)))).start(next: { [weak self, weak oldView, weak selectedView] value in
+                ioDisposabe.set((item.image.get() |> map { $0.value } |> take(1) |> timeout(0.7, queue: Queue.mainQueue(), alternate: .single(.image(nil, nil)))).start(next: { [weak self, weak oldView, weak selectedView] value in
+                    
                     
                     if let view = self?.view, let contentInset = self?.contentInset, let contentFrame = self?.contentFrame, let oldView = oldView {
                         let newRect = view.focus(item.sizeValue.fitted(contentFrame.size), inset: contentInset)
@@ -793,24 +875,24 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
                         if value.hasValue, let strongSelf = self {
                             self?.animate(oldRect: oldRect, newRect: newRect, newAlphaFrom: 0, newAlphaTo:1, oldAlphaFrom: 1, oldAlphaTo:0, contents: value, oldView: oldView, completion: { [weak strongSelf, weak selectedView] in
                                 selectedView?.isHidden = false
-                                strongSelf?.lockedTransition = false
-                                strongSelf?.captionView.change(opacity: 1.0)
+                                strongSelf?.captionScrollView.change(opacity: 1.0)
                                 strongSelf?.hasInited = true
                                 strongSelf?.selectedItem?.appear(for: selectedView?.contentView)
+                                strongSelf?.lockedTransition = false
                             }, stableId: item.stableId, addAccesoryOnCopiedView: addAccesoryOnCopiedView)
                         } else {
                             selectedView?.isHidden = false
                             self?.hasInited = true
-                            self?.lockedTransition = false
                             self?.selectedItem?.appear(for: selectedView?.contentView)
-
+                            self?.lockedTransition = false
                         }
                         if let selectedView = selectedView {
                             addVideoTimebase?((item.stableId, selectedView.contentView))
                         }
                     }
                     
-                    
+                    showBackground?()
+
                     completion?()
 
                 }))
@@ -901,7 +983,7 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
         lockedTransition = true
         
         
-        captionView.change(opacity: 0, animated: true)
+        captionScrollView.change(opacity: 0, animated: true)
         
         if let selectedView = controller.selectedViewController?.view as? MagnifyView, let item = selectedItem {
             selectedView.isHidden = true
@@ -911,10 +993,14 @@ class GalleryPageController : NSObject, NSPageControllerDelegate {
                 newRect.origin = newRect.origin.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
                 let oldRect = view.focus(item.sizeValue.fitted(contentFrame.size), inset:contentInset)
                 
-                ioDisposabe.set((item.image.get() |> take(1) |> timeout(0.1, queue: Queue.mainQueue(), alternate: .single(.image(nil, nil)))).start(next: { [weak self] value in
-                    self?.animate(oldRect: oldRect, newRect: newRect, newAlphaFrom: 1, newAlphaTo:0, oldAlphaFrom: 0, oldAlphaTo: 1, contents: value, oldView: oldView, completion: {
-                        completion?((true, item.stableId))
-                    }, stableId: item.stableId, addAccesoryOnCopiedView: addAccesoryOnCopiedView)
+                ioDisposabe.set((item.image.get() |> map { $0.value } |> take(1) |> timeout(0.1, queue: Queue.mainQueue(), alternate: .single(.image(nil, nil)))).start(next: { [weak self, weak item] value in
+                    if let item = item {
+                        self?.animate(oldRect: oldRect, newRect: newRect, newAlphaFrom: 1, newAlphaTo:0, oldAlphaFrom: 0, oldAlphaTo: 1, contents: value, oldView: oldView, completion: { [weak item] in
+                            if let item = item {
+                                completion?((true, item.stableId))
+                            }
+                        }, stableId: item.stableId, addAccesoryOnCopiedView: addAccesoryOnCopiedView)
+                    }
                 }))
                 
                 addVideoTimebase?((item.stableId, selectedView.contentView))

@@ -8,6 +8,11 @@
 
 import Cocoa
 
+public enum NavigationBarSwapAnimation {
+    case none
+    case crossfade
+}
+
 public struct NavigationBarStyle {
     public let height:CGFloat
     public let enableBorder:Bool
@@ -50,6 +55,7 @@ public class NavigationBarView: View {
     required public init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+    
     
     public override func draw(_ layer: CALayer, in ctx: CGContext) {
         
@@ -111,6 +117,10 @@ public class NavigationBarView: View {
     @objc func viewFrameChanged(_ notification:Notification) {
         guard let window = window as? Window, !window.inLiveSwiping else {return}
         layout(left: leftView, center: centerView, right: rightView)
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
     
     func startMoveViews(left:BarView, center:BarView, right:BarView, direction: SwipeDirection) {
@@ -407,4 +417,45 @@ public class NavigationBarView: View {
         
     }
     
+    private func applyAnimation(_ animation: NavigationBarSwapAnimation, from fromView: BarView, to toView: BarView) {
+        
+        toView.frame = fromView.frame
+
+        switch animation {
+        case .none:
+            toView.layer?.opacity = 1.0
+            self.addSubview(toView, positioned: .below, relativeTo: fromView)
+            fromView.removeFromSuperview()
+            toView.layer?.removeAllAnimations()
+            fromView.layer?.removeAllAnimations()
+        case .crossfade:
+            self.addSubview(toView, positioned: .below, relativeTo: fromView)
+            toView.layer?.opacity = 1.0
+            toView.layer?.removeAllAnimations()
+            toView.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
+            fromView.layer?.animateAlpha(from: 1, to: 0, duration: 0.2, removeOnCompletion: false, completion: { [weak fromView] _ in
+                fromView?.removeFromSuperview()
+                fromView?.layer?.removeAllAnimations()
+            })
+        }
+    }
+    
+    public func switchLeftView(_ barView: BarView, animation: NavigationBarSwapAnimation) {
+        if self.leftView != barView {
+            applyAnimation(animation, from: self.leftView, to: barView)
+            self.leftView = barView
+        }
+    }
+    public func switchCenterView(_ barView: BarView, animation: NavigationBarSwapAnimation) {
+        if self.centerView != barView {
+            applyAnimation(animation, from: self.centerView, to: barView)
+            self.centerView = barView
+        }
+    }
+    public func switchRightView(_ barView: BarView, animation: NavigationBarSwapAnimation) {
+        if self.rightView != barView {
+            applyAnimation(animation, from: self.rightView, to: barView)
+            self.rightView = barView
+        }
+    }
 }

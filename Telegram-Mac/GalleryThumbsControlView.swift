@@ -10,39 +10,111 @@ import Cocoa
 import TGUIKit
 import SwiftSignalKit
 
+private class GalleryThumb {
+    var signal:Signal<ImageDataTransformation, NoError>? {
+        var signal:Signal<ImageDataTransformation, NoError>?
+        if let item = item as? MGalleryPhotoItem {
+            signal = chatWebpageSnippetPhoto(account: item.context.account, imageReference: item.entry.imageReference(item.media), scale: System.backingScale, small: true, secureIdAccessContext: item.secureIdAccessContext)
+        } else if let item = item as? MGalleryGIFItem {
+            signal = chatMessageVideo(postbox: item.context.account.postbox, fileReference: item.entry.fileReference(item.media), scale: System.backingScale)
+        } else if let item = item as? MGalleryVideoItem {
+            signal = chatMessageVideo(postbox: item.context.account.postbox, fileReference: item.entry.fileReference(item.media), scale: System.backingScale)
+        } else if let item = item as? MGalleryPeerPhotoItem {
+            signal = chatMessagePhoto(account: item.context.account, imageReference: item.entry.imageReference(item.media), scale: System.backingScale)
+        }
+        return signal
+    }
+    let size: NSSize?
+    private weak var _view: GalleryThumbContainer? = nil
+    var selected: Bool = false
+    var isEnabled: Bool = true
+    private let callback:(MGalleryItem)->Void
+    let item: MGalleryItem
+    
+    var frame: NSRect = .zero
+    
+    init(_ item: MGalleryItem, callback:@escaping(MGalleryItem)->Void) {
+        self.callback = callback
+        self.item = item
+
+        if let item = item as? MGalleryPhotoItem {
+            item.fetch()
+        } else if let item = item as? MGalleryPeerPhotoItem {
+            item.fetch()
+        }
+       
+        var size: NSSize?
+        if let item = item as? MGalleryPhotoItem {
+            size = item.media.representations.first?.dimensions.size
+        } else if let item = item as? MGalleryGIFItem {
+            size = item.media.videoSize
+        } else if let item = item as? MGalleryVideoItem {
+            size = item.media.videoSize
+        } else if let item = item as? MGalleryPeerPhotoItem {
+            size = item.media.representations.first?.dimensions.size
+        }
+        
+        self.size = size
+    }
+    
+    var viewSize: NSSize {
+        if selected {
+            return NSMakeSize(80, 80)
+        } else {
+            return NSMakeSize(40, 80)
+        }
+    }
+    
+    var view: GalleryThumbContainer {
+        if _view == nil {
+            let view = GalleryThumbContainer(self)
+            view.frame = frame
+            view.set(handler: { [weak self] _ in
+                guard let `self` = self else {
+                    return
+                }
+                self.callback(self.item)
+            }, for: .Click)
+            _view = view
+            return view
+        }
+        return _view!
+    }
+    
+    var opt:GalleryThumbContainer? {
+        return _view
+    }
+    
+    func cleanup() {
+        _view?.removeFromSuperview()
+        _view = nil
+    }
+    
+}
+
 class GalleryThumbContainer : Control {
     
     fileprivate let imageView: TransformImageView = TransformImageView()
     fileprivate let overlay: View = View()
-    init(_ item: MGalleryItem) {
+    fileprivate init(_ item: GalleryThumb) {
         super.init(frame: NSZeroRect)
         backgroundColor = .clear
-        
-        var signal:Signal<ImageDataTransformation, NoError>?
-        var size: NSSize?
-        if let item = item as? MGalleryPhotoItem {
-            signal = chatWebpageSnippetPhoto(account: item.context.account, imageReference: item.entry.imageReference(item.media), scale: backingScaleFactor, small: true, secureIdAccessContext: item.secureIdAccessContext)
-            size = item.media.representations.first?.dimensions.size
-            item.fetch()
-        } else if let item = item as? MGalleryGIFItem {
-            signal = chatMessageImageFile(account: item.context.account, fileReference: item.entry.fileReference(item.media), scale: backingScaleFactor)
-            size = item.media.videoSize
-        } else if let item = item as? MGalleryVideoItem {
-            signal = chatMessageImageFile(account: item.context.account, fileReference: item.entry.fileReference(item.media), scale: backingScaleFactor)
-            size = item.media.videoSize
-        } else if let item = item as? MGalleryPeerPhotoItem {
-            signal = chatMessagePhoto(account: item.context.account, imageReference: item.entry.imageReference(item.media), scale: backingScaleFactor)
-            
-            size = item.media.representations.first?.dimensions.size
-            item.fetch()
-        }
-        
-
-        if let signal = signal, let size = size {
-            imageView.setSignal(signal)
+        if let signal = item.signal, let size = item.size {
             let arguments = TransformImageArguments(corners: ImageCorners(), imageSize:size.aspectFilled(NSMakeSize(80, 80)), boundingSize: NSMakeSize(80, 80), intrinsicInsets: NSEdgeInsets())
+            let media = item.item.entry.message?.media.first
+
+            if let media = media {
+                imageView.setSignal(signal: cachedMedia(media: media, arguments: arguments, scale: System.backingScale), clearInstantly: true)
+            }
+
+            imageView.setSignal(signal, cacheImage: { result in
+                if let media = media {
+                    cacheMedia(result, media: media, arguments: arguments, scale: System.backingScale)
+                }
+            })
             imageView.set(arguments: arguments)
         }
+        overlay.layer?.opacity = 0.35
         overlay.setFrameSize(80, 80)
         imageView.setFrameSize(80, 80)
         addSubview(imageView)
@@ -76,7 +148,10 @@ class GalleryThumbsControlView: View {
 
     private let scrollView: HorizontalScrollView = HorizontalScrollView()
     private let documentView: View = View()
-    private var selectedView: View?
+    private var selectedView: GalleryThumbContainer?
+    
+    private var items: [GalleryThumb] = []
+    
     required init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         backgroundColor = .clear
@@ -86,6 +161,44 @@ class GalleryThumbsControlView: View {
         scrollView.background = .clear
         
         documentView.backgroundColor = .clear
+        
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(scrollDidUpdated), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+        NotificationCenter.default.addObserver(self, selector: #selector(scrollDidUpdated), name: NSView.frameDidChangeNotification, object: scrollView)
+
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    private var previousRange: NSRange? = nil
+    
+    @objc private func scrollDidUpdated() {
+        
+        
+        var range: NSRange = NSMakeRange(NSNotFound, 0)
+        
+        let distance:(min: CGFloat, max: CGFloat) = (min: scrollView.documentOffset.x - 80, max: scrollView.documentOffset.x + scrollView.frame.width + 80)
+        
+        for (i, item) in items.enumerated() {
+            if item.frame.minX >= distance.min && item.frame.maxX <= distance.max {
+                range.length += 1
+                if range.location == NSNotFound {
+                    range.location = i
+                }
+            } else if range.location != NSNotFound {
+                break
+            }
+        }
+        
+        if previousRange == range {
+            return
+        }
+        
+        previousRange = range
+        
+        documentView.subviews = range.location == NSNotFound ? [] : items.subarray(with: range).map { $0.view }
     }
     
     override func layout() {
@@ -98,33 +211,19 @@ class GalleryThumbsControlView: View {
     }
     
     func insertItem(_ item: MGalleryItem, at: Int, isSelected: Bool, animated: Bool, callback:@escaping(MGalleryItem)->Void) {
-        let view = GalleryThumbContainer(item)
-        
-        let difSize = NSMakeSize(frame.height / (!isSelected ? 2.0 : 1.0), frame.height)
-        view.frame = focus(difSize)
-        view.set(handler: { [weak item] _ in
-            if let item = item {
-                callback(item)
-            }
-        }, for: .SingleClick)
-        
-        var subviews = documentView.subviews
-        
-        if animated {
-            view.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
-        }
+        let view = GalleryThumb(item, callback: callback)
+        view.selected = isSelected
         
         let idx = idsExcludeDisabled(at)
-        subviews.insert(view, at: idx)
-        documentView.subviews = subviews
-        documentView.needsDisplay = true
+        
+        items.insert(view, at: idx)
+        
     }
     
     func idsExcludeDisabled(_ at: Int) -> Int {
         var idx = at
-        for i in 0 ..< documentView.subviews.count {
-            let subview = documentView.subviews[i] as! GalleryThumbContainer
-            if !subview.isEnabled {
+        for i in 0 ..< items.count {
+            if !items[i].isEnabled {
                 if i <= at {
                     idx += 1
                 }
@@ -137,14 +236,13 @@ class GalleryThumbsControlView: View {
     func removeItem(at: Int, animated: Bool) {
         
         let idx = idsExcludeDisabled(at)
-        
-
-        let subview = documentView.subviews[idx] as! GalleryThumbContainer
-        subview.isEnabled = false
-        subview.change(opacity: 0, animated: animated, completion: { [weak subview] completed in
-            if completed {
-                subview?.removeFromSuperview()
-            }
+        var subview:GalleryThumb? = items[idx]
+        subview?.isEnabled = false
+        subview?.opt?.isEnabled = false
+        items.remove(at: idx)
+        subview?.opt?.change(opacity: 0, animated: animated, completion: { completed in
+            subview?.cleanup()
+            subview = nil
         })
     }
     
@@ -155,42 +253,48 @@ class GalleryThumbsControlView: View {
     var documentSize: NSSize {
         return NSMakeSize(min(documentView.frame.width, frame.width), documentView.frame.height)
     }
+
+    func updateHighlight() {
+
+    }
     
     func layoutItems(selectedIndex: Int? = nil, animated: Bool) {
         
         let idx = idsExcludeDisabled(selectedIndex ?? 0)
         
-
-        
         let minWidth: CGFloat = frame.height / 2
         let difSize = NSMakeSize(frame.height, frame.height)
         
-        
-        
-        var x:CGFloat = 0// startCenter - index * (minWidth + 4) - 4
+        var x:CGFloat = 0
         
         let duration: Double = 0.4
         var selectedView: GalleryThumbContainer?
-        for i in 0 ..< documentView.subviews.count {
-            let view = documentView.subviews[i] as! GalleryThumbContainer
+        for i in 0 ..< items.count {
+            let thumb = items[i]
             var size = idx == i ? difSize : NSMakeSize(minWidth, frame.height)
-            view.overlay.change(opacity: 0.35)
-            if view.isEnabled {
-                view._change(size: size, animated: animated, duration: duration, timingFunction: CAMediaTimingFunctionName.spring)
-                
-                let f = view.focus(view.imageView.frame.size)
-                view.imageView._change(pos: f.origin, animated: animated, duration: duration, timingFunction: CAMediaTimingFunctionName.spring)
-                
-                view._change(pos: NSMakePoint(x, 0), animated: animated, duration: duration, timingFunction: CAMediaTimingFunctionName.spring)
-                
+            let view = thumb.opt
+            
+            let rect = CGRect(origin: NSMakePoint(x, 0), size: size)
+            thumb.frame = rect
+            
+            view?.overlay.change(opacity: 0.35)
+            if thumb.isEnabled {
+                if let view = view {
+                    view._change(size: rect.size, animated: animated, duration: duration, timingFunction: CAMediaTimingFunctionName.spring)
+                    
+                    let f = view.focus(view.imageView.frame.size)
+                    view.imageView._change(pos: f.origin, animated: animated, duration: duration, timingFunction: CAMediaTimingFunctionName.spring)
+                    
+                    view._change(pos: rect.origin, animated: animated, duration: duration, timingFunction: CAMediaTimingFunctionName.spring)
+                }
             } else {
                 size.width -= minWidth
             }
             x += size.width + 4
-
+            
             if idx == i {
                 selectedView = view
-                view.overlay.change(opacity: 0.0)
+                view?.overlay.change(opacity: 0.0)
             }
         }
         
@@ -200,13 +304,10 @@ class GalleryThumbsControlView: View {
 
         
         if let selectedView = selectedView {
-            scrollView.clipView.scroll(to: NSMakePoint(min(max(selectedView.frame.midX - frame.width / 2, 0), max(documentView.frame.width - frame.width, 0)), 0), animated: animated)
-           // documentView.change(pos: NSMakePoint(selectedView.frame.minX, 0), animated: true)
+            scrollView.clipView.scroll(to: NSMakePoint(min(max(selectedView.frame.midX - frame.width / 2, 0), max(documentView.frame.width - frame.width, 0)), 0), animated: animated && documentView.subviews.count > 0)
         }
-        
-        
-       // change(size: NSMakeSize(min(500, documentView.frame.width), documentView.frame.height), animated: animated)
-        
+        previousRange = nil
+        scrollDidUpdated()
     }
     
 }

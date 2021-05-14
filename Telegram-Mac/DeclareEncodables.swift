@@ -32,6 +32,8 @@ private var telegramUIDeclaredEncodables: Void = {
     declareEncodable(EmojiSkinModifier.self, f: { AutoNightThemePreferences(decoder: $0) })
     declareEncodable(InstantPageStoredDetailsState.self, f: { InstantPageStoredDetailsState(decoder: $0) })
     declareEncodable(CachedChannelAdminRanks.self, f: { CachedChannelAdminRanks(decoder: $0) })
+    declareEncodable(CachedChannelAdminRank.self, f: { CachedChannelAdminRank(decoder: $0) })
+    declareEncodable(CachedChannelAdminRankType.self, f: { CachedChannelAdminRankType(decoder: $0) })
     declareEncodable(LaunchSettings.self, f: { LaunchSettings(decoder: $0)})
     declareEncodable(AutoplayMediaPreferences.self, f: { AutoplayMediaPreferences(decoder: $0)})
     declareEncodable(VoiceCallSettings.self, f: { VoiceCallSettings(decoder: $0)})
@@ -49,6 +51,11 @@ private var telegramUIDeclaredEncodables: Void = {
     declareEncodable(PasscodeSettings.self, f: { PasscodeSettings(decoder: $0) })
     declareEncodable(CachedInstantPage.self, f: { CachedInstantPage(decoder: $0) })
     declareEncodable(RecentSettingsSearchQueryItem.self, f: { RecentSettingsSearchQueryItem(decoder: $0) })
+    declareEncodable(ChatListFoldersSettings.self, f: { ChatListFoldersSettings(decoder: $0) })
+    declareEncodable(ChatTextInputState.self, f: { ChatTextInputState(decoder: $0) })
+    declareEncodable(PushToTalkValue.self, f: { PushToTalkValue(decoder: $0) })
+    declareEncodable(PushToTalkValue.ModifierFlag.self, f: { PushToTalkValue.ModifierFlag(decoder: $0) })
+    
     return
 }()
 

@@ -140,12 +140,14 @@ func touchBarChatItems(presentation: ChatPresentationInterfaceState, layout: Spl
             }
 
         case .selecting:
-            items.append(.flexibleSpace)
-            items.append(.chatDeleteMessages)
-            items.append(.chatForwardMessages)
-            items.append(.flexibleSpace)
+            if presentation.reportMode == nil {
+                items.append(.flexibleSpace)
+                items.append(.chatDeleteMessages)
+                items.append(.chatForwardMessages)
+                items.append(.flexibleSpace)
+            }
 
-        case let .action(text, _):
+        case let .action(text, _, _):
             if !(presentation.peer is TelegramSecretChat) {
                 items.append(.flexibleSpace)
                 items.append(.chatInputAction(text))
@@ -244,7 +246,7 @@ class ChatTouchBar: NSTouchBar, NSTouchBarDelegate, Notifable {
         item.showPopover(item)
     }
     @objc private func searchAction() {
-        chatInteraction?.update({$0.updatedSearchMode((!$0.isSearchMode.0, nil))})
+        chatInteraction?.update({$0.updatedSearchMode((!$0.isSearchMode.0, nil, nil))})
     }
     
     @objc private func attachPhotoOrVideo() {
@@ -262,7 +264,7 @@ class ChatTouchBar: NSTouchBar, NSTouchBarDelegate, Notifable {
     @objc private func invokeInputAction(_ sender: Any?) {
         if let chatInteraction = self.chatInteraction {
             switch chatInteraction.presentation.state {
-            case .action(_, let action):
+            case .action(_, let action, _):
                 action(chatInteraction)
             case let .channelWithDiscussion(_, leftAction, rightAction):
                 if let sender = sender as? NSButton {
@@ -344,7 +346,7 @@ class ChatTouchBar: NSTouchBar, NSTouchBarDelegate, Notifable {
 
         item.popoverTouchBar = ChatStickersTouchBarPopover(chatInteraction: chatInteraction, dismiss: { [weak item, weak self] file in
             if let file = file {
-                self?.chatInteraction?.sendAppFile(file, false)
+                self?.chatInteraction?.sendAppFile(file, false, nil)
             }
             item?.dismissPopover(nil)
         }, entries: entries)
@@ -612,7 +614,7 @@ class ChatTouchBar: NSTouchBar, NSTouchBarDelegate, Notifable {
                 switch result {
                 case let .stickers(stickers):
                     return StickersScrubberBarItem(identifier: identifier, context: chatInteraction.context, animated: false, sendSticker: { [weak self] file in
-                        self?.chatInteraction?.sendAppFile(file, false)
+                        self?.chatInteraction?.sendAppFile(file, false, nil)
                         self?.chatInteraction?.clearInput()
                     }, entries: stickers.map({.sticker($0.file)}))
                 default:

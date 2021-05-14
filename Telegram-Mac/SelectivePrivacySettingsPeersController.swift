@@ -105,9 +105,9 @@ private enum SelectivePrivacyPeersEntry: TableItemListNodeEntry {
             return ShortPeerRowItem(initialSize, peer: peer.peer, account: arguments.context.account, stableId: stableId, enabled: true, height:44, photoSize: NSMakeSize(30, 30), status: status, drawLastSeparator: true, inset: NSEdgeInsets(left: 30, right: 30), interactionType: interactionType, generalType: .none, viewType: viewType, action: {
                 arguments.openInfo(peer.peer)
             }, contextMenuItems: {
-                return [ContextMenuItem(L10n.confirmDelete, handler: {
+                return .single([ContextMenuItem(L10n.confirmDelete, handler: {
                     arguments.removePeer(peer.peer.id)
-                })]
+                })])
             })
 
         case let .addItem(_, _, viewType):
@@ -261,7 +261,7 @@ class SelectivePrivacySettingsPeersController: EditableViewController<TableView>
 
         }, addPeer: {
 
-            addPeerDisposable.set(selectModalPeers(context: context, title: title, excludePeerIds: currentPeerIds, limit: 0, behavior: SelectUsersAndGroupsBehavior(), confirmation: {_ in return .single(true)}).start(next: { peerIds in
+            addPeerDisposable.set(selectModalPeers(window: context.window, account: context.account, title: title, excludePeerIds: currentPeerIds, limit: 0, behavior: SelectUsersAndGroupsBehavior(), confirmation: {_ in return .single(true)}).start(next: { peerIds in
                 let applyPeers: Signal<Void, NoError> = peersPromise.get()
                     |> take(1)
                     |> mapToSignal { peers -> Signal<[SelectivePrivacyPeer], NoError> in

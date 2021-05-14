@@ -25,9 +25,10 @@ class GeneralInteractedRowView: GeneralRowView {
     override func set(item:TableRowItem, animated:Bool = false) {
         
         
-        nextView.image = theme.icons.generalNext
         
         if let item = item as? GeneralInteractedRowItem {
+            
+            nextView.image = theme.icons.generalNext
             
             if let descLayout = item.descLayout {
                 if descriptionView == nil {
@@ -79,8 +80,11 @@ class GeneralInteractedRowView: GeneralRowView {
                 let layout = item.isSelected ? nil : TextViewLayout(.initialize(string: value, color: isSelect ? theme.colors.underSelectedColor : theme.colors.grayText, font: .normal(.title)), maximumNumberOfLines: 1)
                 
                 textView?.set(layout: layout)
-                
-                nextView.isHidden = false
+                var nextVisible: Bool = true
+                if case let .contextSelector(_, items) = item.type {
+                    nextVisible = !items.isEmpty
+                }
+                nextView.isHidden = !nextVisible
             default:
                 textView?.removeFromSuperview()
                 textView = nil
@@ -89,7 +93,7 @@ class GeneralInteractedRowView: GeneralRowView {
             
             if case let .selectable(value) = item.type {
                 nextView.isHidden = !value
-                nextView.image = theme.icons.generalCheck
+                nextView.image = #imageLiteral(resourceName: "Icon_Check").precomposed(item.customTheme?.accentColor ?? theme.colors.accent)
                 nextView.sizeToFit()
             }
             
@@ -103,8 +107,8 @@ class GeneralInteractedRowView: GeneralRowView {
             if case .nextContext = item.type {
                 needNextImage = true
             }
-            if case .contextSelector = item.type {
-                needNextImage = true
+            if case let .contextSelector(_, items) = item.type {
+                needNextImage = !items.isEmpty
             }
             if needNextImage {
                 nextView.isHidden = false
@@ -145,18 +149,47 @@ class GeneralInteractedRowView: GeneralRowView {
     }
     
     override var backdorColor: NSColor {
+        guard let item = item as? GeneralInteractedRowItem else {
+            return super.backdorColor
+        }
+        if let theme = item.customTheme {
+            return theme.backgroundColor
+        }
         return isSelect ? theme.colors.accentSelect : theme.colors.background
+    }
+    
+    var highlightColor: NSColor {
+        guard let item = item as? GeneralInteractedRowItem else {
+            return super.backdorColor
+        }
+        if let theme = item.customTheme {
+            return theme.highlightColor
+        }
+        return theme.colors.grayHighlight
+    }
+    
+    var borderColor: NSColor {
+        guard let item = item as? GeneralInteractedRowItem else {
+            return theme.colors.border
+        }
+        if item.disableBorder {
+            return .clear
+        }
+        if let theme = item.customTheme {
+            return theme.borderColor
+        }
+        return theme.colors.border
     }
     
     override func updateColors() {
         if let item = item as? GeneralInteractedRowItem {
             self.background = item.viewType.rowBackground
-            let highlighted = isSelect ? self.backdorColor : theme.colors.grayHighlight
+            let highlighted = isSelect ? self.backdorColor : highlightColor
             descriptionView?.backgroundColor = containerView.controlState == .Highlight && !isSelect ? .clear : self.backdorColor
             textView?.backgroundColor = containerView.controlState == .Highlight && !isSelect ? .clear : self.backdorColor
             containerView.set(background: self.backdorColor, for: .Normal)
             containerView.set(background: highlighted, for: .Highlight)
-            progressView?.progressColor = theme.colors.grayIcon
+            progressView?.progressColor = item.customTheme?.secondaryColor ?? theme.colors.grayIcon
         }
         containerView.needsDisplay = true
     }
@@ -196,8 +229,8 @@ class GeneralInteractedRowView: GeneralRowView {
                     ctx.draw(icon, in: NSMakeRect(item.inset.left, f.minY, f.width, f.height))
                 }
                 
-                if item.drawCustomSeparator, !isSelect && !self.isResorting {
-                    ctx.setFillColor(theme.colors.border.cgColor)
+                if item.drawCustomSeparator, !isSelect && !self.isResorting && containerView.controlState != .Highlight {
+                    ctx.setFillColor(borderColor.cgColor)
                     ctx.fill(NSMakeRect(textXAdditional + item.inset.left, frame.height - .borderSize, frame.width - (item.inset.left + item.inset.right + textXAdditional), .borderSize))
                 }
                 
@@ -227,7 +260,7 @@ class GeneralInteractedRowView: GeneralRowView {
                 }
                 
                 if position.border, !isSelect && !self.isResorting  {
-                    ctx.setFillColor(theme.colors.border.cgColor)
+                    ctx.setFillColor(borderColor.cgColor)
                     ctx.fill(NSMakeRect(textXAdditional + insets.left, containerView.frame.height - .borderSize, containerView.frame.width - (insets.left + insets.right + textXAdditional), .borderSize))
                 }
                 
@@ -276,6 +309,12 @@ class GeneralInteractedRowView: GeneralRowView {
         }, for: .Down)
         
         containerView.set(handler: { [weak self] _ in
+            if let event = NSApp.currentEvent {
+                self?.mouseDragged(with: event)
+            }
+        }, for: .MouseDragging)
+        
+        containerView.set(handler: { [weak self] _ in
             self?.invokeIfNeededUp()
         }, for: .Up)
     }
@@ -288,8 +327,21 @@ class GeneralInteractedRowView: GeneralRowView {
         if item.enabled {
             if let textView = self.textView {
                 switch item.type {
-                case let .contextSelector(_, items):
-                    showPopover(for: textView, with: SPopoverViewController(items: items), edge: .minX, inset: NSMakePoint(0,-30))
+                case let .contextSelector(value, items):
+                    if let event = NSApp.currentEvent {
+                        let menu = NSMenu()
+                        if let customTheme = item.customTheme {
+                            menu.appearance = customTheme.appearance
+                        }
+                        menu.items = items.map{ pItem -> ContextMenuItem in
+                            return ContextMenuItem(pItem.title, handler: pItem.handler, dynamicTitle: nil, state: value == pItem.title ? .on : nil)
+                        }
+                        NSMenu.popUpContextMenu(menu, with: event, for: textView)
+                    } else {
+                        showPopover(for: textView, with: SPopoverViewController(items: items), edge: .minX, inset: NSMakePoint(0,-30))
+                    }
+                    
+                    
                     return
                 default:
                     break

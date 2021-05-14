@@ -135,8 +135,8 @@ public class LinearProgressControl: Control {
             self.scrubblingTempState = progress
             self.onLiveScrobbling?(nil)
             // }
-        } else {
-            super.mouseDown(with: event)
+        } else if !userInteractionEnabled {
+            //super.mouseDown(with: event)
         }
     }
     
@@ -257,14 +257,22 @@ public class LinearProgressControl: Control {
             layout()
         }
     }
-    public func set(progress:CGFloat, animated:Bool = false, duration: Double = 0.2) {
+    public func set(progress:CGFloat, animated:Bool = false, duration: Double = 0.2, timingFunction: CAMediaTimingFunctionName = .linear, bounce: Bool = false) {
         let progress:CGFloat = progress.isNaN ? 1 : progress
         self.progress = progress
         let size = NSMakeSize(floorToScreenPixels(backingScaleFactor, max(containerView.frame.width * self.progress, hasMinumimVisibility ? progressHeight : 0)), progressHeight)
 
-        progressView.change(size: size, animated: animated, duration: duration, timingFunction: .linear)
+        if animated {
+            let size = NSMakeSize(size.width - progressView.frame.width, size.height - progressView.frame.height)
+            progressView.layer?.animateBounds(from: CGRect(origin: .zero, size: size), to: .zero, duration: duration, timingFunction: timingFunction, additive: true)
+        }
+        
+        progressView.setFrameSize(size)
+
+        
+        progressView.change(size: size, animated: animated, duration: duration, timingFunction: timingFunction)
         if let scrubber = scrubber {
-            scrubber.change(pos: NSMakePoint(containerView.frame.minX + size.width - scrubber.frame.width / 2, scrubber.frame.minY), animated: animated)
+            scrubber.change(pos: NSMakePoint(max(0, min(containerView.frame.minX + size.width - scrubber.frame.width / 2, containerView.frame.maxX - scrubber.frame.width)), scrubber.frame.minY), animated: animated, timingFunction: timingFunction)
         }
         progressView.centerY(x: 0)
         
@@ -339,7 +347,7 @@ public class LinearProgressControl: Control {
         
         
         if let scrubber = scrubber {
-            scrubber.centerY(x: containerView.frame.minX + size.width - scrubber.frame.width / 2)
+            scrubber.centerY(x: max(0, min(containerView.frame.minX + size.width - scrubber.frame.width / 2, containerView.frame.maxX - scrubber.frame.width)))
         }
 
     }

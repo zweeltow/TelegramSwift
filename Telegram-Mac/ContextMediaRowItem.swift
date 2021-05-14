@@ -16,10 +16,14 @@ import Postbox
 final class ContextMediaArguments {
     let sendResult: (ChatContextResult, NSView) -> Void
     let menuItems: (TelegramMediaFile, NSView) -> Signal<[ContextMenuItem], NoError>
-    
-    init(sendResult: @escaping(ChatContextResult, NSView) -> Void, menuItems: @escaping(TelegramMediaFile, NSView) -> Signal<[ContextMenuItem], NoError> = { _, _ in return .single([]) }) {
+    let openMessage: (Message) -> Void
+    let messageMenuItems: (Message, NSView) -> Signal<[ContextMenuItem], NoError>
+
+    init(sendResult: @escaping(ChatContextResult, NSView) -> Void = { _, _ in }, menuItems: @escaping(TelegramMediaFile, NSView) -> Signal<[ContextMenuItem], NoError> = { _, _ in return .single([]) }, openMessage: @escaping(Message) -> Void = { _ in }, messageMenuItems:@escaping (Message, NSView) -> Signal<[ContextMenuItem], NoError> = { _, _ in return .single([]) }) {
         self.sendResult = sendResult
         self.menuItems = menuItems
+        self.openMessage = openMessage
+        self.messageMenuItems = messageMenuItems
     }
 }
 
@@ -51,6 +55,13 @@ class ContextMediaRowItem: TableRowItem {
         return height
     }
     
+    func contains(_ messageId: MessageId) -> Bool {
+        if self.result.messages.contains(where: { $0.id == messageId }) {
+            return true
+        }
+        return false
+    }
+    
     override func viewClass() -> AnyClass {
         return ContextMediaRowView.self
     }
@@ -60,14 +71,21 @@ class ContextMediaRowItem: TableRowItem {
         var i:Int = 0
         for size in result.sizes {
             if location.x > inset && location.x < inset + size.width {
-                switch result.results[i] {
-                case let .internalReference(_, _, _, _, _, _, file, _):
-                    if let file = file, let view = self.view {
-                        let items = arguments.menuItems(file, view.subviews[i])
+                if !result.messages.isEmpty {
+                    if let view = self.view {
+                        let items = arguments.messageMenuItems(result.messages[i], view.subviews[i])
                         return items
                     }
-                default:
-                    break
+                } else {
+                    switch result.results[i] {
+                    case let .internalReference(values):
+                        if let file = values.file, let view = self.view {
+                            let items = arguments.menuItems(file, view.subviews[i])
+                            return items
+                        }
+                    default:
+                        break
+                    }
                 }
                 break
             }
@@ -85,9 +103,10 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
    
     
     private let stickerFetchedDisposable:MetaDisposable = MetaDisposable()
-    
+    private let longDisposable = MetaDisposable()
     deinit {
         stickerFetchedDisposable.dispose()
+        longDisposable.dispose()
     }
     
     func previewMediaIfPossible() -> Bool {
@@ -96,6 +115,25 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
         }
         return true
     }
+    
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        
+        let signal = Signal<NoValue, NoError>.complete() |> delay(0.2, queue: .mainQueue())
+        
+        let downIndex = self.index(at: convert(event.locationInWindow, to: nil))
+        
+        longDisposable.set(signal.start(completed: { [weak self] in
+            guard let `self` = self, let window = self.window else {
+                return
+            }
+            let nextIndex = self.index(at: self.convert(window.mouseLocationOutsideOfEventStream, to: nil))
+            if nextIndex == downIndex {
+                _ = self.previewMediaIfPossible()
+            }
+        }))
+    }
+    
     
     override func forceClick(in location: NSPoint) {
         if mouseInside() == true {
@@ -131,6 +169,18 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
         return nil
     }
     
+    override func interactionContentView(for innerId: AnyHashable, animateIn: Bool) -> NSView {
+        if let innerId = innerId.base as? MessageId {
+            let view = self.subviews.first(where: {
+                ($0 as? GIFContainerView)?.associatedMessageId == innerId
+            })
+            return view ?? self
+        }
+        return self
+    }
+    
+
+    
     override func set(item: TableRowItem, animated: Bool) {
         super.set(item: item, animated: animated)
 
@@ -145,7 +195,7 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
                 switch item.result.entries[i] {
                 case let .gif(data):
                     let view: GIFContainerView
-                    let index = subviews.firstIndex(where: { $0 is GIFContainerView})
+                    let index = subviews.firstIndex(where: { $0 is GIFContainerView })
                     if let index = index {
                         view = subviews.remove(at: index) as! GIFContainerView
                         inner: for view in view.subviews {
@@ -157,15 +207,33 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
                     } else {
                         view = GIFContainerView()
                     }
-                    let signal:Signal<ImageDataTransformation, NoError> =  chatMessageVideo(postbox: item.context.account.postbox, fileReference: data.file, scale: backingScaleFactor)
-                    view.removeAllHandlers()
-                    view.set(handler: { [weak item] control in
-                        if let item = item {
-                            item.arguments.sendResult(item.result.results[i], control)
-                        }
-                    }, for: .Click)
                     
-                    view.update(with: data.file.resourceReference(data.file.media.resource) , size: NSMakeSize(item.result.sizes[i].width, item.height - 2), viewSize: item.result.sizes[i], file: data.file.media, context: item.context, table: item.table, iconSignal: signal)
+                    var effectiveFile = data.file
+                    
+                    if let preview = data.file.media.videoThumbnails.first {
+                        
+                        let file = effectiveFile.media.withUpdatedResource(preview.resource)
+
+                        switch data.file {
+                        case let .message(message, _):
+                            effectiveFile = FileMediaReference.message(message: message, media: file)
+                        case .standalone:
+                            effectiveFile = FileMediaReference.standalone(media: file)
+                        case .savedGif:
+                            effectiveFile = FileMediaReference.savedGif(media: file)
+                        case let .stickerPack(stickerPack, _):
+                            effectiveFile = FileMediaReference.stickerPack(stickerPack: stickerPack, media: file)
+                        case let .webPage(webPage, _):
+                            effectiveFile = FileMediaReference.webPage(webPage: webPage, media: file)
+                        case let .avatarList(peer: reference, media: media):
+                            effectiveFile = FileMediaReference.avatarList(peer: reference, media: media)
+                        }
+                        
+                    }
+                    let signal = chatMessageVideo(postbox: item.context.account.postbox, fileReference: effectiveFile, scale: backingScaleFactor)
+                    
+
+                    view.update(with: effectiveFile, size: NSMakeSize(item.result.sizes[i].width, item.height - 2), viewSize: item.result.sizes[i], context: item.context, table: item.table, iconSignal: signal)
                     if i != (item.result.entries.count - 1) {
                         let layer = View()
                         layer.identifier = NSUserInterfaceItemIdentifier("gif-separator")
@@ -173,6 +241,7 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
                         layer.background = theme.colors.background
                         view.addSubview(layer)
                     }
+                    view.userInteractionEnabled = false
                     container = view
                 case let .sticker(data):
                     if data.file.isAnimatedSticker {
@@ -186,6 +255,7 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
                         let size = NSMakeSize(round(item.result.sizes[i].width), round(item.result.sizes[i].height))
                         view.update(with: data.file, size: size, context: item.context, parent: nil, table: item.table, parameters: nil, animated: false, positionFlags: nil, approximateSynchronousValue: false)
                         view.userInteractionEnabled = false
+                        
                         container = view
                     } else {
                         let view: TransformImageView
@@ -196,7 +266,7 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
                             view = TransformImageView()
                         }
                         
-                        view.setSignal(chatMessageSticker(postbox: item.context.account.postbox, file: data.file, small: true, scale: backingScaleFactor, fetched: true))
+                        view.setSignal(chatMessageSticker(postbox: item.context.account.postbox, file: stickerPackFileReference(data.file), small: true, scale: backingScaleFactor, fetched: true))
                         let imageSize = item.result.sizes[i].aspectFitted(NSMakeSize(item.height, item.height - 8))
                         view.set(arguments: TransformImageArguments(corners: ImageCorners(), imageSize: imageSize, boundingSize: imageSize, intrinsicInsets: NSEdgeInsets()))
                         
@@ -220,6 +290,7 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
                     view.addSubview(imageView)
                     container = view
                 }
+                
                 container.setFrameOrigin(inset, 0)
                 container.background = theme.colors.background
                 addSubview(container)
@@ -230,22 +301,29 @@ class ContextMediaRowView: TableRowView, ModalPreviewRowViewProtocol {
         }
     }
     
-    
+    func index(at point: NSPoint) -> Int? {
+        if let _ = item as? ContextMediaRowItem {
+            for (i, subview) in self.subviews.enumerated() {
+                if NSPointInRect(point, subview.frame) {
+                    return i
+                }
+            }
+        }
+        return nil
+    }
     
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
-        let point = convert(event.locationInWindow, from: nil)
-        if let item = item as? ContextMediaRowItem {
-            var inset:CGFloat = 0
-            var i:Int = 0
-            if !item.result.results.isEmpty {
-                for size in item.result.sizes {
-                    if point.x > inset && point.x < inset + size.width {
-                        item.arguments.sendResult(item.result.results[i], self.subviews[i])
-                        break
-                    }
-                    inset += size.width + dif
-                    i += 1
+        
+        longDisposable.set(nil)
+        
+        if let item = item as? ContextMediaRowItem, event.clickCount == 1  {
+            let point = convert(event.locationInWindow, from: nil)
+            if let index = self.index(at: point) {
+                if !item.result.messages.isEmpty {
+                    item.arguments.openMessage(item.result.messages[index])
+                } else {
+                    item.arguments.sendResult(item.result.results[index], self.subviews[index])
                 }
             }
         }

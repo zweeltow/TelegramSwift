@@ -26,7 +26,7 @@
 
 @interface ObjcUtils : NSObject
 + (NSData *)dataFromHexString:(NSString *)string;
-+ (NSArray *)textCheckingResultsForText:(NSString *)text highlightMentionsAndTags:(bool)highlightMentionsAndTags highlightCommands:(bool)highlightCommands dotInMention:(bool)dotInMention;
++ (NSArray *)textCheckingResultsForText:(NSString *)text highlightMentions:(bool)highlightMentions highlightTags:(bool)highlightTags highlightCommands:(bool)highlightCommands dotInMention:(bool)dotInMention;
 +(NSString * __nonnull) md5:(NSString *__nonnull)string;
 +(NSArray<NSView *> *__nonnull)findElementsByClass:(NSString *__nonnull)className inView:(NSView *__nonnull)view;
 +(NSString * __nonnull)stringForEmojiHashOfData:(NSData *__nonnull)data count:(NSInteger)count positionExtractor:(int32_t (^__nonnull)(uint8_t *__nonnull, int32_t, int32_t))positionExtractor;
@@ -43,6 +43,10 @@
 + (NSString * __nullable)_youtubeVideoIdFromText:(NSString * __nullable)text originalUrl:(NSString * __nullable)originalUrl startTime:(NSTimeInterval *)startTime;
 +(NSArray<OpenWithObject *> *)appsForFileUrl:(NSString *)fileUrl;
 
+    
++(NSCursor * __nullable)windowResizeNorthWestSouthEastCursor;
++(NSCursor * __nullable)windowResizeNorthEastSouthWestCursor;
+    
 @end
 
 
@@ -71,3 +75,5 @@ int colorIndexForUid(int32_t uid, int32_t myUserId);
 
 NSArray<NSString *> * __nonnull currentAppInputSource();
 NSEvent * __nullable createScrollWheelEvent();
+
+double mappingRange(double x, double in_min, double in_max, double out_min, double out_max);

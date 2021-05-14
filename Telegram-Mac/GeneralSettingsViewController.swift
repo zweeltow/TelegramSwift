@@ -19,6 +19,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case header(sectionId: Int, uniqueId:Int, text:String)
     case sidebar(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case inAppSounds(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
+    case shortcuts(sectionId: Int, viewType: GeneralViewType)
     case enterBehavior(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case cmdEnterBehavior(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case emojiReplacements(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
@@ -33,6 +34,7 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
     case forceTouchEdit(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case forceTouchForward(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     case forceTouchPreviewMedia(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
+    case callSettings(sectionId:Int, enabled: Bool, viewType: GeneralViewType)
     var stableId: Int {
         switch self {
         case let .header(_, uniqueId, _):
@@ -51,24 +53,28 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return 6
         case .inAppSounds:
             return 7
-        case .enableRFTCopy:
+        case .shortcuts:
             return 8
-        case .openChatAtLaunch:
+        case .enableRFTCopy:
             return 9
-        case .acceptSecretChats:
+        case .openChatAtLaunch:
             return 10
-        case .forceTouchReply:
+        case .acceptSecretChats:
             return 11
-        case .forceTouchEdit:
+        case .forceTouchReply:
             return 12
-        case .forceTouchForward:
+        case .forceTouchEdit:
             return 13
-        case .forceTouchPreviewMedia:
+        case .forceTouchForward:
             return 14
-        case .enterBehavior:
+        case .forceTouchPreviewMedia:
             return 15
-        case .cmdEnterBehavior:
+        case .enterBehavior:
             return 16
+        case .cmdEnterBehavior:
+            return 17
+        case .callSettings:
+            return 18
         case let .section(id):
             return (id + 1) * 1000 - id
         }
@@ -90,6 +96,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return (sectionId * 1000) + stableId
         case let .inAppSounds(sectionId, _, _):
             return (sectionId * 1000) + stableId
+        case let .shortcuts(sectionId, _):
+            return (sectionId * 1000) + stableId
         case let .emojiReplacements(sectionId, _, _):
             return (sectionId * 1000) + stableId
         case let .predictEmoji(sectionId, _, _):
@@ -109,6 +117,8 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
         case let .forceTouchForward(sectionId, _, _):
             return (sectionId * 1000) + stableId
         case let .forceTouchPreviewMedia(sectionId, _, _):
+            return (sectionId * 1000) + stableId
+        case let .callSettings(sectionId, _, _):
             return (sectionId * 1000) + stableId
         case let .section(id):
             return (id + 1) * 1000 - id
@@ -144,6 +154,10 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
         case let .inAppSounds(sectionId: _, enabled, viewType):
             return  GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.generalSettingsInAppSounds, type: .switchable(enabled), viewType: viewType, action: {
                 arguments.toggleInAppSounds(!enabled)
+            })
+        case let .shortcuts(_, viewType):
+            return  GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.generalSettingsShortcuts, type: .nextContext("⌘ + ?"), viewType: viewType, action: {
+                arguments.openShortcuts()
             })
         case let .emojiReplacements(sectionId: _, enabled, viewType):
             return  GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.generalSettingsEmojiReplacements, type: .switchable(enabled), viewType: viewType, action: {
@@ -185,6 +199,10 @@ private enum GeneralSettingsEntry : Comparable, Identifiable {
             return GeneralInteractedRowItem(initialSize, name: L10n.generalSettingsForceTouchPreviewMedia, type: .selectable(enabled), viewType: viewType, action: {
                 arguments.toggleForceTouchAction(.previewMedia)
             })
+        case let .callSettings(_, _, viewType):
+            return GeneralInteractedRowItem(initialSize, name: L10n.generalSettingsCallSettingsText, type: .next, viewType: viewType, action: {
+                arguments.callSettings()
+            })
         }
     }
 }
@@ -210,7 +228,9 @@ private final class GeneralSettingsArguments {
     let openChatAtLaunch:(Bool)->Void
     let acceptSecretChats:(Bool)->Void
     let toggleWorkMode:(Bool)->Void
-    init(context:AccountContext, toggleCallsTab:@escaping(Bool)-> Void, toggleInAppKeys: @escaping(Bool) -> Void, toggleInput: @escaping(SendingType)-> Void, toggleSidebar: @escaping (Bool) -> Void, toggleInAppSounds: @escaping (Bool) -> Void, toggleEmojiReplacements:@escaping(Bool) -> Void, toggleForceTouchAction: @escaping(ForceTouchAction)->Void, toggleInstantViewScrollBySpace: @escaping(Bool)->Void, toggleAutoplayGifs:@escaping(Bool) -> Void, toggleEmojiPrediction: @escaping(Bool) -> Void, toggleBigEmoji: @escaping(Bool) -> Void, toggleStatusBar: @escaping(Bool) -> Void, toggleRTFEnabled: @escaping(Bool)->Void, openChatAtLaunch:@escaping(Bool)->Void, acceptSecretChats: @escaping(Bool)->Void, toggleWorkMode:@escaping(Bool)->Void) {
+    let openShortcuts: ()->Void
+    let callSettings: ()->Void
+    init(context:AccountContext, toggleCallsTab:@escaping(Bool)-> Void, toggleInAppKeys: @escaping(Bool) -> Void, toggleInput: @escaping(SendingType)-> Void, toggleSidebar: @escaping (Bool) -> Void, toggleInAppSounds: @escaping (Bool) -> Void, toggleEmojiReplacements:@escaping(Bool) -> Void, toggleForceTouchAction: @escaping(ForceTouchAction)->Void, toggleInstantViewScrollBySpace: @escaping(Bool)->Void, toggleAutoplayGifs:@escaping(Bool) -> Void, toggleEmojiPrediction: @escaping(Bool) -> Void, toggleBigEmoji: @escaping(Bool) -> Void, toggleStatusBar: @escaping(Bool) -> Void, toggleRTFEnabled: @escaping(Bool)->Void, openChatAtLaunch:@escaping(Bool)->Void, acceptSecretChats: @escaping(Bool)->Void, toggleWorkMode:@escaping(Bool)->Void, openShortcuts: @escaping()->Void, callSettings: @escaping() ->Void) {
         self.context = context
         self.toggleCallsTab = toggleCallsTab
         self.toggleInAppKeys = toggleInAppKeys
@@ -228,6 +248,8 @@ private final class GeneralSettingsArguments {
         self.openChatAtLaunch = openChatAtLaunch
         self.acceptSecretChats = acceptSecretChats
         self.toggleWorkMode = toggleWorkMode
+        self.openShortcuts = openShortcuts
+        self.callSettings = callSettings
     }
    
 }
@@ -260,9 +282,16 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.showCallsTab(sectionId: sectionId, enabled: baseSettings.showCallsTab, viewType: .firstItem))
     entries.append(.statusBar(sectionId: sectionId, enabled: baseSettings.statusBar, viewType: .innerItem))
     entries.append(.inAppSounds(sectionId: sectionId, enabled: FastSettings.inAppSounds, viewType: .lastItem))
+    
+    
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
+    
+    entries.append(.header(sectionId: sectionId, uniqueId: headerUnique, text: L10n.generalSettingsShortcutsHeader))
+    headerUnique -= 1
+    entries.append(.shortcuts(sectionId: sectionId, viewType: .singleItem))
 
 
-   
 	
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
@@ -270,7 +299,7 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.header(sectionId: sectionId, uniqueId: headerUnique, text: L10n.generalSettingsAdvancedHeader))
     headerUnique -= 1
     entries.append(.enableRFTCopy(sectionId: sectionId, enabled: FastSettings.enableRTF, viewType: .firstItem))
-    entries.append(.openChatAtLaunch(sectionId: sectionId, enabled: launchSettings.openAtLaunch, viewType: .innerItem))
+   // entries.append(.openChatAtLaunch(sectionId: sectionId, enabled: launchSettings.openAtLaunch, viewType: .innerItem))
     entries.append(.acceptSecretChats(sectionId: sectionId, enabled: secretChatSettings.acceptOnThisDevice, viewType: .lastItem))
     
     entries.append(.section(sectionId: sectionId))
@@ -294,6 +323,14 @@ private func generalSettingsEntries(arguments:GeneralSettingsArguments, baseSett
     entries.append(.section(sectionId: sectionId))
     sectionId += 1
 
+    
+    entries.append(.header(sectionId: sectionId, uniqueId: headerUnique, text: L10n.generalSettingsCallSettingsHeader))
+    headerUnique -= 1
+    
+    entries.append(.callSettings(sectionId: sectionId, enabled: true, viewType: .singleItem))
+
+    entries.append(.section(sectionId: sectionId))
+    sectionId += 1
     
     return entries
 }
@@ -372,6 +409,10 @@ class GeneralSettingsViewController: TableViewController {
             }).start()
         }, toggleWorkMode: { value in
             
+        }, openShortcuts: {
+            context.sharedContext.bindings.rootNavigation().push(ShortcutListController(context: context))
+        }, callSettings: {
+            context.sharedContext.bindings.rootNavigation().push(CallSettingsController(sharedContext: context.sharedContext))
         })
         
         let initialSize = atomicSize
@@ -407,13 +448,13 @@ class GeneralSettingsViewController: TableViewController {
         if loggerClickCount == 5 {
             UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: "enablelogs"), forKey: "enablelogs")
             let logs = Logger.shared.collectLogs() |> deliverOnMainQueue |> mapToSignal { logs -> Signal<Void, NoError> in
-                return selectModalPeers(context: context, title: "Send Logs", limit: 1, confirmation: {_ in return confirmSignal(for: mainWindow, information: "Are you sure you want send logs?")}) |> filter {!$0.isEmpty} |> map {$0.first!} |> mapToSignal { peerId -> Signal<Void, NoError> in
+                return selectModalPeers(window: context.window, account: context.account, title: "Send Logs", limit: 1, confirmation: {_ in return confirmSignal(for: mainWindow, information: "Are you sure you want send logs?")}) |> filter {!$0.isEmpty} |> map {$0.first!} |> mapToSignal { peerId -> Signal<Void, NoError> in
                     let messages = logs.map { (name, path) -> EnqueueMessage in
                         let id = arc4random64()
-                        let file = TelegramMediaFile(fileId: MediaId(namespace: Namespaces.Media.LocalFile, id: id), partialReference: nil, resource: LocalFileReferenceMediaResource(localFilePath: path, randomId: id), previewRepresentations: [], immediateThumbnailData: nil, mimeType: "application/text", size: nil, attributes: [.FileName(fileName: name)])
-                        return .message(text: "", attributes: [], mediaReference: AnyMediaReference.standalone(media: file), replyToMessageId: nil, localGroupingKey: nil)
+                        let file = TelegramMediaFile(fileId: MediaId(namespace: Namespaces.Media.LocalFile, id: id), partialReference: nil, resource: LocalFileReferenceMediaResource(localFilePath: path, randomId: id), previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "application/text", size: nil, attributes: [.FileName(fileName: name)])
+                        return .message(text: "", attributes: [], mediaReference: AnyMediaReference.standalone(media: file), replyToMessageId: nil, localGroupingKey: nil, correlationId: nil)
                     }
-                    return enqueueMessages(context: context, peerId: peerId, messages: messages) |> map {_ in}
+                    return enqueueMessages(account: context.account, peerId: peerId, messages: messages) |> map {_ in}
                 }
             }
             _ = logs.start()
@@ -432,7 +473,7 @@ class GeneralSettingsViewController: TableViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         
-        self.window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             self?.incrementLogClick()
             return .invoked
         }, with: self, for: .L, modifierFlags: [.control])

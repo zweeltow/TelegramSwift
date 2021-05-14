@@ -46,6 +46,7 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
     private var messageActionsPanelView:MessageActionsPanelView?
     private var recordingPanelView:ChatInputRecordingView?
     private var blockedActionView:TitleButton?
+    private var additionBlockedActionView: ImageButton?
     private var chatDiscussionView: ChannelDiscussionInputView?
     private var restrictedView:RestrictionWrappedView?
     
@@ -55,7 +56,7 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
     private var actionsView:ChatInputActionsView!
     private(set) var attachView:ChatInputAttachView!
     
-    
+
     
     
     private let slowModeUntilDisposable = MetaDisposable()
@@ -133,7 +134,7 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
         textView.linkColor = theme.colors.link
         textView.textFont = .normal(CGFloat(theme.fontSize))
         
-        updateInput(interaction.presentation, prevState: ChatPresentationInterfaceState(interaction.chatLocation), false)
+        updateInput(interaction.presentation, prevState: ChatPresentationInterfaceState(chatLocation: interaction.chatLocation, chatMode: interaction.mode), false)
         textView.setPlaceholderAttributedString(.initialize(string: textPlaceholder, color: theme.colors.grayText, font: NSFont.normal(theme.fontSize), coreText: false), update: false)
         
         textView.delegate = self
@@ -146,7 +147,21 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
     }
     
     private var textPlaceholder: String {
+        
+        if case let .replyThread(_, mode) = chatInteraction.mode {
+            switch mode {
+            case .comments:
+                return L10n.messagesPlaceholderComment
+            case .replies:
+                return L10n.messagesPlaceholderReply
+            }
+        }
         if let peer = chatInteraction.presentation.peer {
+            if let peer = peer as? TelegramChannel {
+                if peer.hasPermission(.canBeAnonymous) {
+                    return L10n.messagesPlaceholderAnonymous
+                }
+            }
             if peer.isChannel {
                 return FastSettings.isChannelMessagesMuted(peer.id) ? L10n.messagesPlaceholderSilentBroadcast : L10n.messagesPlaceholderBroadcast
             }
@@ -267,6 +282,8 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
         recordingPanelView = nil
         blockedActionView?.removeFromSuperview()
         blockedActionView = nil
+        additionBlockedActionView?.removeFromSuperview()
+        additionBlockedActionView = nil
         chatDiscussionView?.removeFromSuperview()
         chatDiscussionView = nil
         restrictedView?.removeFromSuperview()
@@ -295,8 +312,9 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
             break
         case .block(_):
             break
-        case let .action(text,action):
+        case let .action(text, action, addition):
             self.messageActionsPanelView?.removeFromSuperview()
+            self.blockedActionView?.removeFromSuperview()
             self.blockedActionView = TitleButton(frame: bounds)
             self.blockedActionView?.style = ControlStyle(font: .normal(.title),foregroundColor: theme.colors.accent)
             self.blockedActionView?.set(text: text, for: .Normal)
@@ -307,8 +325,26 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
             self.blockedActionView?.set(handler: {_ in
                 action(chatInteraction)
             }, for:.Click)
-            
+
+
+
             self.addSubview(self.blockedActionView!, positioned: .below, relativeTo: _ts)
+
+            if let addition = addition {
+                additionBlockedActionView = ImageButton()
+                additionBlockedActionView?.animates = false
+                additionBlockedActionView?.set(image: addition.icon, for: .Normal)
+                additionBlockedActionView?.sizeToFit()
+                addSubview(additionBlockedActionView!, positioned: .above, relativeTo: self.blockedActionView)
+
+                additionBlockedActionView?.set(handler: { control in
+                    addition.action(control)
+                }, for: .Click)
+            } else {
+                additionBlockedActionView?.removeFromSuperview()
+                additionBlockedActionView = nil
+            }
+
             self.contentView.isHidden = true
             self.contentView.change(opacity: 0.0, animated: animated)
             self.accessoryView.change(opacity: 0.0, animated: animated)
@@ -421,6 +457,11 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
         guard let superview = superview else {return}
         textView.max_height = Int32(superview.frame.height / 2 + 50)
         
+        if textView.placeholderAttributedString?.string != self.textPlaceholder {
+            textView.setPlaceholderAttributedString(.initialize(string: textPlaceholder, color: theme.colors.grayText, font: NSFont.normal(theme.fontSize), coreText: false), update: false)
+        }
+
+
     }
     
     override func layout() {
@@ -432,7 +473,10 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
         actionsView.setFrameOrigin(frame.width - actionsView.frame.width, 0)
         attachView.setFrameOrigin(0, 0)
         _ts.setFrameOrigin(0, frame.height - .borderSize)
-        
+        if let additionBlockedActionView = additionBlockedActionView {
+            additionBlockedActionView.centerY(x: frame.width - additionBlockedActionView.frame.width - 22)
+        }
+
     }
     
     override func setFrameOrigin(_ newOrigin: NSPoint) {
@@ -496,26 +540,18 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
     public func textViewEnterPressed(_ event: NSEvent) -> Bool {
         
         if FastSettings.checkSendingAbility(for: event) {
-            if FastSettings.isPossibleReplaceEmojies {
-                let text = textView.string().stringEmojiReplacements
-                if textView.string() != text {
-                    self.textView.setString(text)
-                    let attributed = self.textView.attributedString()
-                    let range = self.textView.selectedRange()
-                    let state = ChatTextInputState(inputText: attributed.string, selectionRange: range.location ..< range.location + range.length, attributes: chatTextAttributes(from: attributed))
-                    chatInteraction.update({$0.withUpdatedEffectiveInputState(state)})
-                }
-            }
-            
             let text = textView.string().trimmed
             if text.length > chatInteraction.presentation.maxInputCharacters {
                 alert(for: chatInteraction.context.window, info: L10n.chatInputErrorMessageTooLongCountable(text.length - Int(chatInteraction.presentation.maxInputCharacters)))
-                return false
+                return true
             }
             if !text.isEmpty || !chatInteraction.presentation.interfaceState.forwardMessageIds.isEmpty || chatInteraction.presentation.state == .editing {
                 chatInteraction.sendMessage(false, nil)
-                chatInteraction.context.account.updateLocalInputActivity(peerId: chatInteraction.peerId, activity: .typingText, isPresent: false)
+                
+                chatInteraction.context.account.updateLocalInputActivity(peerId: .init(peerId: chatInteraction.peerId, category: chatInteraction.mode.activityCategory), activity: .typingText, isPresent: false)
                 markNextTextChangeToFalseActivity = true
+            } else if text.isEmpty {
+                chatInteraction.scrollToLatest(true)
             }
             
             return true
@@ -576,7 +612,18 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
             current = current.withUpdatedEffectiveInputState(state)
             if let disabledPreview = current.interfaceState.composeDisableUrlPreview {
                 if !current.effectiveInput.inputText.contains(disabledPreview) {
-                    current = current.updatedUrlPreview(nil).updatedInterfaceState {$0.withUpdatedComposeDisableUrlPreview(nil)}
+
+                    var detectedUrl: String?
+                    current.effectiveInput.attributedString.enumerateAttribute(NSAttributedString.Key(rawValue: TGCustomLinkAttributeName), in: current.effectiveInput.attributedString.range, options: NSAttributedString.EnumerationOptions(rawValue: 0), using: { (value, range, stop) in
+                        if let tag = value as? TGInputTextTag, let url = tag.attachment as? String {
+                            detectedUrl = url
+                        }
+                        let s: ObjCBool = (detectedUrl != nil) ? true : false
+                        stop.pointee = s
+                    })
+                    if detectedUrl == nil {
+                        current = current.updatedUrlPreview(nil).updatedInterfaceState {$0.withUpdatedComposeDisableUrlPreview(nil)}
+                    }
                 }
             }
             return current
@@ -586,7 +633,7 @@ class ChatInputView: View, TGModernGrowingDelegate, Notifable {
             
             sendActivityDisposable.set((Signal<Bool, NoError>.single(!state.inputText.isEmpty) |> then(Signal<Bool, NoError>.single(false) |> delay(4.0, queue: Queue.mainQueue()))).start(next: { [weak self] isPresent in
                 if let chatInteraction = self?.chatInteraction, let peer = chatInteraction.presentation.peer, !peer.isChannel && chatInteraction.presentation.state != .editing {
-                    chatInteraction.context.account.updateLocalInputActivity(peerId: chatInteraction.peerId, activity: .typingText, isPresent: isPresent)
+                    chatInteraction.context.account.updateLocalInputActivity(peerId: .init(peerId: peer.id, category: chatInteraction.mode.activityCategory), activity: .typingText, isPresent: isPresent)
                 }
             }))
         }

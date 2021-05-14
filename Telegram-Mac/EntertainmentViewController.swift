@@ -19,6 +19,7 @@ enum ESearchCommand {
     case normal
     case close
     case clearText
+    case apply(String)
 }
 
 open class EntertainmentSearchView: OverlayControl, NSTextViewDelegate {
@@ -283,7 +284,7 @@ open class EntertainmentSearchView: OverlayControl, NSTextViewDelegate {
         
         change(state: .Focus, true)
         
-        self.kitWindow?.set(escape: {[weak self] () -> KeyHandlerResult in
+        self.kitWindow?.set(escape: { [weak self] _ -> KeyHandlerResult in
             if let strongSelf = self {
                 return strongSelf.changeResponder() ? .invoked : .rejected
             }
@@ -291,14 +292,14 @@ open class EntertainmentSearchView: OverlayControl, NSTextViewDelegate {
             
         }, with: self, priority: .modal)
         
-        self.kitWindow?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.kitWindow?.set(handler: { [weak self] _ -> KeyHandlerResult in
             if self?.state == .Focus {
                 return .invokeNext
             }
             return .rejected
         }, with: self, for: .RightArrow, priority: .modal)
         
-        self.kitWindow?.set(handler: { [weak self] () -> KeyHandlerResult in
+        self.kitWindow?.set(handler: { [weak self] _ -> KeyHandlerResult in
             if self?.state == .Focus {
                 return .invokeNext
             }
@@ -486,6 +487,8 @@ public final class EntertainmentInteractions {
     var showEntertainment:(EntertainmentState, Bool)->Void = { _,_  in}
     var close:()->Void = {}
 
+    var toggleSearch:()->Void = { }
+    
     let peerId:PeerId
     
     init(_ defaultState: EntertainmentState, peerId:PeerId) {
@@ -502,10 +505,6 @@ final class EntertainmentView : View {
     fileprivate let stickers: ImageButton = ImageButton()
     fileprivate let gifs: ImageButton = ImageButton()
     
-    fileprivate let search: ImageButton = ImageButton()
-
-    fileprivate private(set) var searchView: EntertainmentSearchView?
-    
     
     
     private let sectionTabs: View = View()
@@ -521,7 +520,6 @@ final class EntertainmentView : View {
         self.sectionTabs.addSubview(self.stickers)
         self.sectionTabs.addSubview(self.gifs)
         
-        self.bottomView.addSubview(self.search)
         self.bottomView.addSubview(self.borderView)
     }
     
@@ -532,9 +530,6 @@ final class EntertainmentView : View {
         self.emoji.set(image: theme.icons.entertainment_Emoji, for: .Normal)
         self.stickers.set(image: theme.icons.entertainment_Stickers, for: .Normal)
         self.gifs.set(image: theme.icons.entertainment_Gifs, for: .Normal)
-        self.search.set(image: theme.icons.entertainment_Search, for: .Normal)
-        
-        _ = self.search.sizeToFit()
         _ = self.emoji.sizeToFit()
         _ = self.stickers.sizeToFit()
         _ = self.gifs.sizeToFit()
@@ -542,38 +537,38 @@ final class EntertainmentView : View {
     }
     
     func toggleSearch(_ signal:ValuePromise<SearchState>) {
-        if let searchView = self.searchView {
-            self.searchView = nil
-            searchView.searchInteractions = nil
-            signal.set(.init(state: .None, request: nil))
-            searchView.layer?.animateAlpha(from: 1, to: 0, duration: 0.2, removeOnCompletion: false, completion: { [weak searchView] _ in
-                searchView?.removeFromSuperview()
-            })
-            self.search.isSelected = false
-        } else {
-            self.searchView = EntertainmentSearchView(frame: NSMakeRect(0, 0, frame.width, 50))
-            self.addSubview(self.searchView!)
-            self.searchView?.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
-            self.searchView?.searchInteractions = SearchInteractions({ [weak self] state, _ in
-                signal.set(state)
-                switch state.state {
-                case .Focus:
-                    break
-                case .None:
-                    self?.toggleSearch(signal)
-                }
-            }, { [weak self] state in
-                signal.set(state)
-                switch state.state {
-                case .Focus:
-                    break
-                case .None:
-                    self?.toggleSearch(signal)
-                }
-            })
-            self.search.isSelected = true
-            self.searchView?.change(state: .Focus, false)
-        }
+//        if let searchView = self.searchView {
+//            self.searchView = nil
+//            searchView.searchInteractions = nil
+//            signal.set(.init(state: .None, request: nil))
+//            searchView.layer?.animateAlpha(from: 1, to: 0, duration: 0.2, removeOnCompletion: false, completion: { [weak searchView] _ in
+//                searchView?.removeFromSuperview()
+//            })
+//            self.search.isSelected = false
+//        } else {
+//            self.searchView = EntertainmentSearchView(frame: NSMakeRect(0, 0, frame.width, 50))
+//            self.addSubview(self.searchView!)
+//            self.searchView?.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
+//            self.searchView?.searchInteractions = SearchInteractions({ [weak self] state, _ in
+//                signal.set(state)
+//                switch state.state {
+//                case .Focus:
+//                    break
+//                case .None:
+//                    self?.toggleSearch(signal)
+//                }
+//            }, { [weak self] state in
+//                signal.set(state)
+//                switch state.state {
+//                case .Focus:
+//                    break
+//                case .None:
+//                    self?.toggleSearch(signal)
+//                }
+//            })
+//            self.search.isSelected = true
+//            self.searchView?.change(state: .Focus, false)
+//        }
     }
     
     func updateSelected(_ state: EntertainmentState) {
@@ -599,8 +594,6 @@ final class EntertainmentView : View {
         self.borderView.frame = NSMakeRect(0, 0, self.bottomView.frame.width, .borderSize)
         self.sectionTabs.setFrameSize(NSMakeSize(self.sectionTabs.subviewsSize.width + 40, 40))
         self.sectionTabs.center()
-        
-        self.search.centerY(x: 20)
         
         self.emoji.centerY(x: 0)
         self.stickers.centerY(x: self.emoji.frame.maxX + 20)
@@ -636,6 +629,19 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
     
     private let searchState = ValuePromise<SearchState>(.init(state: .None, request: nil))
     
+    private var effectiveSearchView: SearchView? {
+        if self.gifs.view.superview != nil  {
+            return self.gifs.genericView.searchView
+        }
+        if self.emoji.view.superview != nil  {
+            return self.emoji.genericView.searchView
+        }
+        if self.stickers.view.superview != nil  {
+            return self.stickers.genericView.searchView
+        }
+        return nil
+    }
+    
     func update(with chatInteraction:ChatInteraction) -> Void {
         self.chatInteraction = chatInteraction
         
@@ -645,11 +651,11 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
             self?.closePopover()
         }
         interactions.sendSticker = { [weak self] file, silent in
-            self?.chatInteraction?.sendAppFile(file, silent)
+            self?.chatInteraction?.sendAppFile(file, silent, self?.effectiveSearchView?.query)
             self?.closePopover()
         }
         interactions.sendGIF = { [weak self] file, silent in
-            self?.chatInteraction?.sendAppFile(file, silent)
+            self?.chatInteraction?.sendAppFile(file, silent, self?.effectiveSearchView?.query)
             self?.closePopover()
         }
         interactions.sendEmoji = { [weak self] emoji in
@@ -657,11 +663,17 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
             guard let `self` = self else {
                 return
             }
-            if self.genericView.searchView != nil {
-                self.genericView.toggleSearch(self.searchState)
-            }
+            
+//            if self.genericView.searchView != nil {
+//                self.genericView.toggleSearch(self.searchState)
+//            }
         }
-        
+        interactions.toggleSearch = { [weak self] in
+            guard let `self` = self else {
+                return
+            }
+            self.toggleSearch()
+        }
         self.interactions = interactions
         
         emoji.update(with: interactions)
@@ -677,9 +689,9 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
     init(size:NSSize, context:AccountContext) {
         
         self.cap = SidebarCapViewController(context)
-        self.emoji = EmojiViewController(context, search: self.searchState.get())
-        self.stickers = NStickersViewController(context, search: self.searchState.get())
-        self.gifs = GIFViewController(context, search: self.searchState.get())
+        self.emoji = EmojiViewController(context)
+        self.stickers = NStickersViewController(context)
+        self.gifs = GIFViewController(context)
         
         var items:[SectionControllerItem] = []
         items.append(SectionControllerItem(title:{L10n.entertainmentEmoji.uppercased()}, controller: emoji))
@@ -723,18 +735,29 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
         window?.removeAllHandlers(for: self)
     }
     
+    private func toggleSearch() {
+        if let searchView = self.effectiveSearchView {
+            if searchView.state == .Focus {
+                searchView.setString("")
+                searchView.cancel(true)
+            } else {
+                searchView.change(state: .Focus, true)
+            }
+        }
+    }
+    
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         section.viewDidAppear(animated)
         
-        window?.set(handler: { [weak self] () -> KeyHandlerResult in
+        window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             guard let `self` = self else {
                 return .rejected
             }
             if self.context.sharedContext.bindings.rootNavigation().genericView.state != .single {
                 return .rejected
             }
-            self.genericView.toggleSearch(self.searchState)
+            self.toggleSearch()
             return .invoked
         }, with: self, for: .F, priority: .modal, modifierFlags: .command)
 
@@ -750,6 +773,12 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
         return EntertainmentView(sectionView: self.section.view, frame: rect)
     }
 
+    override func firstResponder() -> NSResponder? {
+        if popover == nil {
+            return nil
+        }
+        return effectiveSearchView//genericView.searchView?.input
+    }
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -758,32 +787,34 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
         self.genericView.updateSelected(FastSettings.entertainmentState)
 
         
-        let callSearchCmd:(ESearchCommand)->Void = { [weak self] command in
+        let callSearchCmd:(ESearchCommand, SearchView)->Void = { command, view in
             switch command {
             case .clearText:
-                self?.genericView.searchView?.setString("")
+                view.setString("")
             case .loading:
-                self?.genericView.searchView?.isLoading = true
+                view.isLoading = true
             case .normal:
-                self?.genericView.searchView?.isLoading = false
+                view.isLoading = false
             case .close:
-                self?.genericView.searchView?.cancel(true)
+                view.cancel(true)
+            case let .apply(value):
+                view.setString(value)
             }
         }
         
         self.stickers.makeSearchCommand = { [weak self] command in
-            if self?.stickers.view.superview != nil  {
-                callSearchCmd(command)
+            if self?.stickers.view.superview != nil, let view = self?.stickers.genericView.searchView  {
+                callSearchCmd(command, view)
             }
         }
         self.gifs.makeSearchCommand = { [weak self] command in
-            if self?.gifs.view.superview != nil  {
-                callSearchCmd(command)
+            if self?.gifs.view.superview != nil, let view = self?.gifs.genericView.searchView  {
+                callSearchCmd(command, view)
             }
         }
         self.emoji.makeSearchCommand = { [weak self] command in
-            if self?.emoji.view.superview != nil  {
-                callSearchCmd(command)
+            if self?.emoji.view.superview != nil, let view = self?.emoji.genericView.searchView  {
+                callSearchCmd(command, view)
             }
         }
         
@@ -820,11 +851,6 @@ class EntertainmentViewController: TelegramGenericViewController<EntertainmentVi
             self.section.select(2, true, notifyApper: true)
         }, for: .Click)
         
-        self.genericView.search.set(handler: { [weak self] _ in
-            if let `self` = self {
-                self.genericView.toggleSearch(self.searchState)
-            }
-        }, for: .Click)
         
         section.selectionUpdateHandler = { [weak self] index in
             let state = EntertainmentState(rawValue: Int32(index))!
